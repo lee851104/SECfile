@@ -355,9 +355,12 @@ select {
     <hr class="div">
 
     <div class="field-label">FOLDER</div>
+    <input type="text" id="folderInput" placeholder="Enter download folder path..."
+           style="width:100%; padding:7px 10px; border:1px solid #E5E5E7; border-radius:6px; font-size:11px; font-family:Consolas,monospace; margin-bottom: 6px;">
     <div class="folder-row">
       <span class="folder-path" id="folderPath">…</span>
       <button class="btn-browse" id="btnBrowse">Browse</button>
+      <button class="btn-browse" id="btnSetPath">Set</button>
     </div>
 
     <div class="spacer"></div>
@@ -450,13 +453,15 @@ function setFolderDisplay(path) {
         console.log('Cannot save to localStorage');
     }
 
-    // 顯示完整路徑，並在標題欄提示
+    // 在輸入框和顯示區顯示完整路徑
+    document.getElementById('folderInput').value = path;
     document.getElementById('folderPath').textContent = path;
     document.getElementById('folderPath').title = path;
 }
 
 document.getElementById('btnBrowse').addEventListener('click', async () => {
     const btn = document.getElementById('btnBrowse');
+    const input = document.getElementById('folderInput');
     btn.textContent = 'Picking…';
     btn.disabled = true;
 
@@ -465,41 +470,60 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
         if ('showDirectoryPicker' in window) {
             try {
                 const dirHandle = await window.showDirectoryPicker();
-                const fullPath = await getFullPath(dirHandle);
-                console.log('[btnBrowse] Selected path:', fullPath);
+                // 只能取得資料夾名稱，要使用者自己輸入完整路徑
+                console.log('[btnBrowse] Selected folder:', dirHandle.name);
 
-                // 發送路徑到後端驗證
-                console.log('[btnBrowse] Sending path to server:', fullPath);
-                const r = await fetch('/api/browse-folder', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: fullPath })
-                });
-                const d = await r.json();
-                console.log('[btnBrowse] Server response:', d);
-
-                if (d.ok || d.path) {
-                    console.log('[btnBrowse] Setting folder display to:', d.path);
-                    setFolderDisplay(d.path);
-                    log(`✓ Download folder set to: ${d.path}`, 'success');
-                } else {
-                    alert('Error: ' + (d.error || 'Unknown error'));
-                }
+                // 在輸入框中提示使用者手動輸入完整路徑
+                alert('Please enter the full path to the folder you selected in the input field below.\n\nExample: C:\\Users\\YourName\\Downloads\n\nFolder name: ' + dirHandle.name);
+                input.focus();
+                input.select();
             } catch (e) {
                 if (e.name !== 'AbortError') {
                     console.error('Error selecting folder:', e);
-                    log('✗ Could not select folder: ' + e.message, 'error');
-                    // Fallback：顯示提示並使用預設路徑
-                    alert('Could not select folder. Using default download folder.');
-                    await loadFolder();
                 }
             }
         } else {
             // Render 或其他環境：不支援 File System Access API
-            alert('Folder selection not available.\n\nThe application will use the default download folder: ' + lastFolder);
+            alert('Please enter the download folder path in the input field.\n\nExample: C:\\Users\\YourName\\Downloads');
+            input.focus();
         }
     } finally {
         btn.textContent = 'Browse';
+        btn.disabled = false;
+    }
+});
+
+document.getElementById('btnSetPath').addEventListener('click', async () => {
+    const input = document.getElementById('folderInput');
+    const path = input.value.trim();
+
+    if (!path) {
+        alert('Please enter a folder path');
+        return;
+    }
+
+    const btn = document.getElementById('btnSetPath');
+    btn.textContent = 'Setting…';
+    btn.disabled = true;
+
+    try {
+        const r = await fetch('/api/browse-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: path })
+        });
+        const d = await r.json();
+
+        if (d.ok || d.path) {
+            setFolderDisplay(d.path);
+            log(`✓ Download folder set to: ${d.path}`, 'success');
+        } else {
+            alert('Error: ' + (d.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+    } finally {
+        btn.textContent = 'Set';
         btn.disabled = false;
     }
 });

@@ -62,10 +62,9 @@ def browse_folder():
     is_folder_name_only = new_path and not ((':\\' in new_path) or new_path.startswith('/'))
     if is_folder_name_only:
         debug_log.append(f"⚠ Received folder name only: {new_path}")
-        debug_log.append(f"ℹ Browser File System Access API cannot provide full path in this configuration")
-        # 使用預設路徑加上資料夾名稱
-        new_path = str(Path(DEFAULT_DOWNLOAD_DIR) / new_path)
-        debug_log.append(f"ℹ Using default path with folder name: {new_path}")
+        debug_log.append(f"ℹ This appears to be a folder name without full path")
+        debug_log.append(f"ℹ Ignoring and using default folder instead")
+        new_path = ""  # 強制使用預設
 
     # 如果沒有提供路徑，檢查環境變數或使用預設
     if not new_path:
