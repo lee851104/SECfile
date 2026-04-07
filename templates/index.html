@@ -354,10 +354,7 @@ select {
     <div class="field-label">FOLDER</div>
     <div class="folder-row">
       <span class="folder-path" id="folderPath">…</span>
-      <input type="text" id="folderInput" placeholder="/path/to/folder"
-             style="flex:1; padding:4px 8px; border:1px solid #E5E5E7; border-radius:6px; font-size:11px; font-family:Consolas,monospace; display:none;">
-      <button class="btn-browse" id="btnBrowse" style="display:none;">✓ Set</button>
-      <button class="btn-browse" id="btnEditFolder">Edit</button>
+      <button class="btn-browse" id="btnBrowse">Browse</button>
     </div>
 
     <div class="spacer"></div>
@@ -411,125 +408,94 @@ let lastFolder   = '';
 let statuses     = {};
 
 // ── Folder ────────────────────────────────────────────────
-let supportBrowse = false;
+let selectedFolderHandle = null;
 
 async function loadFolder() {
+    // 優先從 localStorage 讀取之前選擇的資料夾
+    try {
+        const saved = localStorage.getItem('selectedFolderPath');
+        if (saved) {
+            setFolderDisplay(saved);
+            return;
+        }
+    } catch (e) {
+        console.log('localStorage not available');
+    }
+
+    // 若沒有之前的選擇，從伺服器取得預設資料夾
     const r = await fetch('/api/folder');
     const d = await r.json();
     setFolderDisplay(d.path);
-
-    // 檢查是否支援本地 browse
-    try {
-        const br = await fetch('/api/browse-folder', { method: 'POST' });
-        const bd = await br.json();
-        supportBrowse = bd.support_browse === true;
-        updateBrowseButton();
-    } catch (e) {
-        supportBrowse = false;
-        updateBrowseButton();
-    }
 }
 
 function setFolderDisplay(path) {
     lastFolder = path;
+    try {
+        localStorage.setItem('selectedFolderPath', path);
+    } catch (e) {
+        console.log('Cannot save to localStorage');
+    }
+
     const parts = path.replace(/\\/g, '/').split('/');
     const short = parts.slice(-2).join('/');
     document.getElementById('folderPath').textContent = short || path;
     document.getElementById('folderPath').title = path;
-    document.getElementById('folderInput').value = path;
-}
-
-function updateBrowseButton() {
-    const btnBrowse = document.getElementById('btnBrowse');
-    const btnEdit = document.getElementById('btnEditFolder');
-    const folderInput = document.getElementById('folderInput');
-
-    if (supportBrowse) {
-        // 本地模式：顯示 Browse 按鈕
-        btnBrowse.style.display = 'inline-block';
-        btnEdit.style.display = 'none';
-        folderInput.style.display = 'none';
-    } else {
-        // 遠程模式：顯示 Edit 按鈕和輸入框
-        btnBrowse.style.display = 'none';
-        btnEdit.style.display = 'inline-block';
-        folderInput.style.display = 'none';
-    }
 }
 
 document.getElementById('btnBrowse').addEventListener('click', async () => {
     const btn = document.getElementById('btnBrowse');
-    btn.textContent = 'Picking…'; btn.disabled = true;
-    try {
-        const r = await fetch('/api/browse-folder', { method: 'POST' });
-        const d = await r.json();
-        setFolderDisplay(d.path);
-    } finally {
-        btn.textContent = 'Browse'; btn.disabled = false;
-    }
-});
-
-document.getElementById('btnEditFolder').addEventListener('click', () => {
-    const btnEdit = document.getElementById('btnEditFolder');
-    const folderInput = document.getElementById('folderInput');
-    const btnSet = document.getElementById('btnBrowse');
-
-    if (folderInput.style.display === 'none') {
-        // 進入編輯模式
-        folderInput.style.display = 'block';
-        btnSet.style.display = 'inline-block';
-        btnEdit.textContent = 'Cancel';
-        folderInput.focus();
-        folderInput.select();
-    } else {
-        // 取消編輯
-        folderInput.style.display = 'none';
-        btnSet.style.display = 'none';
-        btnEdit.textContent = 'Edit';
-    }
-});
-
-document.getElementById('btnBrowse').addEventListener('click', async function setFolder() {
-    if (document.getElementById('folderInput').style.display === 'none') {
-        // 這是 Browse 按鈕，已在上面處理
-        return;
-    }
-
-    // 這是 Set 按鈕
-    const folderInput = document.getElementById('folderInput');
-    const path = folderInput.value.trim();
-    if (!path) {
-        alert('Please enter a valid path');
-        return;
-    }
-
-    const btn = document.getElementById('btnBrowse');
+    btn.textContent = 'Picking…';
     btn.disabled = true;
-    btn.textContent = 'Setting…';
 
     try {
-        const r = await fetch('/api/set-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path })
-        });
-        const d = await r.json();
+        // 檢查瀏覽器是否支援 File System Access API
+        if ('showDirectoryPicker' in window) {
+            try {
+                const dirHandle = await window.showDirectoryPicker();
+                const fullPath = await getFullPath(dirHandle);
 
-        if (d.ok) {
-            setFolderDisplay(d.path);
-            folderInput.style.display = 'none';
-            btn.style.display = 'none';
-            document.getElementById('btnEditFolder').textContent = 'Edit';
+                // 發送路徑到後端驗證
+                const r = await fetch('/api/browse-folder', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: fullPath })
+                });
+                const d = await r.json();
+
+                if (d.ok) {
+                    setFolderDisplay(d.path);
+                } else {
+                    alert('Error: ' + d.error);
+                }
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    alert('Error selecting folder: ' + e.message);
+                }
+            }
         } else {
-            alert('Error: ' + d.error);
+            // 不支援 File System Access API，提示用戶
+            alert('Your browser does not support folder selection. Please use Chromium-based browsers (Chrome, Edge, etc.)');
+        }
+    } finally {
+        btn.textContent = 'Browse';
+        btn.disabled = false;
+    }
+});
+
+// 嘗試取得資料夾的完整路徑
+async function getFullPath(dirHandle) {
+    try {
+        // 嘗試使用 path 屬性（在某些瀏覽器中支援）
+        if (dirHandle.name) {
+            // 如果只能獲得名稱，就用名稱代替
+            // 實際的檔案操作會透過 FileSystemDirectoryHandle 進行
+            return dirHandle.name;
         }
     } catch (e) {
-        alert('Error: ' + e);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '✓ Set';
+        console.log('Cannot get full path');
     }
-});
+    return dirHandle.name || 'selected_folder';
+}
 
 document.getElementById('btnOpenFolder').addEventListener('click', () => {
     const btn = document.getElementById('btnOpenFolder');

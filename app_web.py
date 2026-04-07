@@ -43,41 +43,10 @@ def get_folder():
 
 @app.route("/api/browse-folder", methods=["POST"])
 def browse_folder():
-    """用 tkinter 開啟資料夾選擇器（本地執行）。"""
+    """用瀏覽器的 File System Access API 選擇資料夾（Chromium 可用）。"""
     global _download_dir
-
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        result: dict = {}
-
-        def pick():
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes("-topmost", True)
-            path = filedialog.askdirectory(initialdir=str(_download_dir))
-            root.destroy()
-            result["path"] = path
-
-        t = threading.Thread(target=pick)
-        t.start()
-        t.join(timeout=60)
-
-        chosen = result.get("path")
-        if chosen:
-            _download_dir = Path(chosen).resolve()
-
-        return jsonify({"path": str(_download_dir), "support_browse": True})
-    except ImportError:
-        # 遠程環境無 tkinter，回傳現有路徑和標記
-        return jsonify({"path": str(_download_dir), "support_browse": False})
-
-
-@app.route("/api/set-folder", methods=["POST"])
-def set_folder():
-    """直接設定資料夾路徑（用於網頁輸入）。"""
-    global _download_dir
+    # 此 API 由前端的 JavaScript 直接調用瀏覽器功能
+    # 後端只需回傳確認收到新路徑並驗證
     data = request.json or {}
     new_path = data.get("path", "").strip()
 
