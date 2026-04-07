@@ -4,128 +4,104 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-SEC EDGAR Downloader is a Tkinter-based GUI application for downloading SEC financial filings (10-K and 10-Q forms) from the SEC EDGAR database. The application converts iXBRL HTML filings to Markdown for easy reading.
+Two entry points exist side by side:
+- **`app.py`** — Tkinter desktop GUI (local only, writes files directly to disk)
+- **`app_web.py`** — Flask web app (Render-deployable, files streamed to user's browser via File System Access API)
 
-## Architecture
+The web app is the primary focus. The desktop app is kept as a reference/fallback.
 
-### Core Components
-
-1. **`app.py`** — Main Tkinter GUI application
-   - Left sidebar: ticker search, year/form filters, download folder picker
-   - Right main area: download queue with file list and progress tracking
-   - Threading for non-blocking search and download operations
-
-2. **`core/edgar_client.py`** — SEC EDGAR API client
-   - `EdgarClient` class: handles ticker→CIK lookup, filing queries, document URL resolution
-   - `FilingRecord` dataclass: represents a single filing with accession number, form type, dates, etc.
-   - `fuzzy_search()`: local search against `POPULAR_TICKERS` constant
-   - Rate limiting (0.15s delay) to respect SEC's 10 req/s limit
-   - Retry logic with exponential backoff
-
-3. **`core/filing_resolver.py`** — Fiscal year inference and file naming
-   - `infer_fiscal_year_end_month()`: infers company's fiscal year end from 10-K dates (e.g., NVDA = 1, AAPL = 9)
-   - `resolve_label()`: converts FilingRecord → human-readable label (e.g., "2024_FY", "2026_Q1")
-   - `resolve_filename()`: returns filename with `.md` extension
-   - Internal helpers: `_fiscal_year_of()`, `_fiscal_quarter_of()` handle fiscal year math
-
-4. **`core/downloader.py`** — Filing download and format conversion
-   - `FilingDownloader.download_batch()`: batch download with progress callbacks
-   - `_clean_xbrl()`: removes hidden XBRL `<div style="display:none">` blocks and `<ix:*>` namespace elements
-   - `_prepare_html_for_pdf(html, base_url, session)`: strips scripts/styles, embeds images as base64 (using edgar client session to bypass SEC 403), injects clean CSS
-   - `_convert_html_to_pdf(html, path)`: renders HTML to PDF via Playwright (Chromium)
-   - `_html_to_markdown()`: converts cleaned HTML → Markdown with `ignore_tables=True` (no `---|---` artifacts)
-   - Each filing outputs two files: `2024_FY.pdf` (readable) + `2024_FY.md` (plain text)
-   - Downloaded files stored in `downloads/TICKER/FORM_TYPE/` directory
-
-5. **`utils/constants.py`** — Global configuration
-   - SEC EDGAR API endpoints and rate limiting
-   - HTTP defaults (timeout, retries, user agent)
-   - `POPULAR_TICKERS`: 30-ticker database for autocomplete
-
-## Key Design Decisions
-
-### Fiscal Year Handling
-
-Different companies have different fiscal year ends (Apple: Sept, NVIDIA: Jan). The app infers this from 10-K filing dates and uses it to:
-- Label filings correctly (e.g., NVIDIA's Q1 FY2026 has report_date in April 2025)
-- Filter by fiscal year in the UI (not calendar year)
-
-### iXBRL Cleaning
-
-SEC filings use inline XBRL (iXBRL) for structured data. The HTML contains:
-- `<div style="display:none">` blocks with XBRL unit/context definitions (biggest source of gibberish)
-- `<ix:hidden>` blocks with raw XBRL values
-- `<xbrli:*>`, `<link:*>` namespace tags and `xmlns:*` declarations
-
-`_clean_xbrl()` removes all of these before conversion, preserving only visible business content.
-
-### HTML → PDF Conversion (primary output)
-
-- Uses **Playwright (Chromium)** to render cleaned HTML directly to PDF
-- Images (company logos etc.) are downloaded via `EdgarClient.session` and embedded as base64 — necessary because SEC returns 403 to headless browser requests
-- Original SEC inline `style=""` attributes are preserved (they carry table border info)
-- External `<style>` blocks are stripped and replaced with a minimal clean CSS
-- Output: `downloads/TICKER/FORM_TYPE/2024_FY.pdf`
-
-### HTML → Markdown Conversion (secondary output)
-
-- Uses `html2text` with `ignore_tables=True` to avoid `---|---` table artifacts
-- Useful for text search or LLM ingestion
-- Output: `downloads/TICKER/FORM_TYPE/2024_FY.md`
-
-## Running the Application
+## Running
 
 ```bash
+# Desktop GUI
 py app.py
-```
 
-(On Windows, use `py` not `python3`)
+# Web app (local dev)
+py app_web.py        # → http://localhost:5000
 
-## Dependencies
+# Playwright browser (required for PDF)
+py -m playwright install chromium
 
-Install via:
-```bash
+# Dependencies
 pip install -r requirements.txt
-pip install html2text  # for best Markdown conversion quality
 ```
 
-Core requirements:
-- `requests` — SEC EDGAR API calls
-- `html2text` — HTML→Markdown conversion
-- `playwright` — Chromium-based HTML→PDF rendering (run `py -m playwright install chromium` after pip install)
-- `beautifulsoup4` + `lxml` — HTML parsing utilities
-- `Pillow` — Image support
+On Windows use `py`, not `python3`.
 
-## Common Tasks
+## Web App Architecture
 
-### Add a new ticker to autocomplete
-Edit `POPULAR_TICKERS` in `utils/constants.py`.
+### Download Flow (critical to understand)
 
-### Adjust SEC rate limiting
-Change `RATE_LIMIT_DELAY` in `utils/constants.py` (current: 0.15s = ~6.7 req/s, safe for 10 req/s limit).
+The server **never saves files to disk**. Instead:
 
-### Change filing types
-Modify `SUPPORTED_FORMS` in `utils/constants.py` or add CLI args to `EdgarClient.get_filings()`.
+1. Frontend calls `POST /api/get-filing` with a single `FilingRecord`
+2. Server downloads HTML from SEC → `_clean_xbrl()` → `_prepare_html_for_pdf()` → `convert_html_to_pdf_bytes()` (Playwright)
+3. Server returns raw PDF bytes in the HTTP response (`X-Filename` header carries the filename)
+4. Frontend writes the bytes directly to the user's local disk using the **File System Access API** (`FileSystemDirectoryHandle.createWritable()`)
+5. A `ticker/` subfolder is created automatically inside the user's chosen folder
 
-### Debug a filing download
-Check:
-1. `EdgarClient.get_document_url()` — returns correct document URL
-2. `_clean_xbrl()` — validates XBRL removal
-3. `_html_to_markdown()` — check Markdown output quality
+### Folder Path Resolution (Open Folder button)
 
-## Testing Notes
+Browsers cannot expose full OS paths from `showDirectoryPicker()`. The workaround:
 
-- No automated tests yet; manual testing via GUI
-- SEC EDGAR APIs are live; use cautiously to avoid rate limit bans
-- Test ticker: AAPL (widely available filings)
-- Test ticker: NVDA (non-calendar fiscal year)
+1. On Browse, frontend writes a `.sec_marker_<uuid>` file into the selected folder
+2. Frontend calls `POST /api/register-folder` with the UUID
+3. Server searches `~/Desktop`, `~/Downloads`, `~/Documents`, `~`, and all drive roots (Windows) up to 4 levels deep for the marker file
+4. Server caches `uuid → full_path` in `_folder_cache` dict (in-memory, lost on restart)
+5. On "Open Folder" click, frontend calls `POST /api/open-folder` with the UUID + ticker → server calls `os.startfile()` / `open` / `xdg-open`
 
-## Recent Changes
+The `dirHandle` is persisted across page refreshes via **IndexedDB**.
 
-- **Apr 7**: Switched to Playwright-based HTML→PDF rendering
-  - Each download now produces both `.pdf` (readable) and `.md` (plain text)
-  - PDF uses Playwright/Chromium to render HTML directly — preserves tables, headings, logos
-  - Images embedded as base64 (SEC blocks headless browser image requests with 403)
-  - XBRL cleaning improved: removes hidden `<div style="display:none">` blocks (was the main source of gibberish)
-  - `edgar_client.get_document_url()` now checks filing index for best .htm file
-  - Removed: WeasyPrint, reportlab, markdown-pdf (all had Windows compatibility issues)
+### API Routes
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/api/search` | GET | Ticker → CIK → filings list + fye_month |
+| `/api/autocomplete` | GET | Fuzzy search against POPULAR_TICKERS |
+| `/api/get-filing` | POST | Returns single filing as PDF bytes |
+| `/api/register-folder` | POST | Finds marker file → caches full path |
+| `/api/open-folder` | POST | Opens cached folder in OS file explorer |
+
+## Core Modules
+
+### `core/edgar_client.py`
+- `EdgarClient.get_cik(ticker)` — downloads and caches full `company_tickers.json` (~1.5 MB) on first call
+- `EdgarClient.get_document_url(filing)` — checks filing index JSON for best `.htm` file (prefers non-iXBRL)
+- `EdgarClient.download_html(url)` — retries up to `MAX_RETRIES` with exponential backoff, 30s timeout
+- Rate limiting: 0.15s between requests (`RATE_LIMIT_DELAY` in `utils/constants.py`)
+
+### `core/downloader.py`
+Key functions used by `app_web.py`:
+- `_clean_xbrl(html)` — removes `display:none` divs, `<ix:*>` tags, namespace declarations
+- `_prepare_html_for_pdf(html, base_url, session)` — strips `<script>`/`<style>`, embeds images as base64 (SEC blocks headless browser image requests with 403, so images must be pre-fetched using the `EdgarClient.session` which has the correct User-Agent)
+- `convert_html_to_pdf_bytes(html)` — Playwright Chromium renders to PDF, returns `bytes | None`
+
+The desktop app uses `FilingDownloader.download_batch()` which writes `.pdf` + `.md` to disk — this is **not** used by the web app.
+
+### `core/filing_resolver.py`
+Fiscal year inference: reads 10-K `report_date` months to determine `fye_month` (e.g. Apple=9, NVIDIA=1). This affects how filings are labelled (`2025_Q1`, `2025_FY`, etc.) and how the year filter works in the UI.
+
+## Fiscal Year Label Logic
+
+`resolve_label(filing, fye_month)`:
+- 10-K → `{fiscal_year}_FY` where fiscal year = calendar year the FYE falls in
+- 10-Q → `{fiscal_year}_Q{1|2|3}` — quarter determined by months-since-fiscal-year-start
+
+Example: NVIDIA FYE=January, report_date=2025-04 → FY2026_Q1 (April is Q1 of the fiscal year starting Feb 2025).
+
+## Deployment (Render)
+
+`render.yaml` configures:
+- Build: `pip install -r requirements.txt && python -m playwright install chromium`
+- Start: `gunicorn app_web:app`
+
+`PORT` env var is respected. `DOWNLOAD_DIR` env var is no longer used (files go to user's browser).
+
+The `_folder_cache` and `dirHandle` (IndexedDB) are per-session client-side state. The Open Folder feature only works when running locally, not on Render.
+
+## Key Constants (`utils/constants.py`)
+
+- `POPULAR_TICKERS` — 30-entry list for autocomplete; add entries here to expand search
+- `SUPPORTED_FORMS = ["10-K", "10-Q"]`
+- `MAX_FILINGS = 40` per form type
+- `RATE_LIMIT_DELAY = 0.15` seconds
