@@ -4,7 +4,7 @@ services:
     env: python
     region: oregon
     plan: free
-    buildCommand: "pip install -r requirements.txt && python -m playwright install chromium"
+    buildCommand: "pip install -r requirements.txt && python -m playwright install --with-deps chromium"
     startCommand: "gunicorn app_web:app"
     envVars:
       - key: PYTHON_VERSION
