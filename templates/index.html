@@ -298,28 +298,37 @@ select {
 .btn-browse:hover:not(:disabled) { background: #EBF4FF; }
 .btn-browse:disabled { color: #ADADB8; cursor: default; }
 
-.btn-open-folder {
+/* ── Downloaded file list ────────────────── */
+.file-links {
+    display: none;
+    margin-top: 10px;
+    border: 1px solid #E5E5E7;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.file-links-header {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: #86868B;
+    padding: 7px 12px;
+    background: #FAFAFA;
+    border-bottom: 1px solid #E5E5E7;
+}
+.file-link-item {
     display: flex;
     align-items: center;
-    gap: 6px;
-    background: #E5E5E7;
-    color: #ADADB8;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 14px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: default;
-    margin-top: 8px;
-    transition: background .2s, color .2s;
-    width: fit-content;
-}
-.btn-open-folder.ready {
-    background: #34C759;
-    color: #fff;
+    gap: 8px;
+    padding: 7px 12px;
+    border-bottom: 1px solid #F5F5F7;
+    text-decoration: none;
     cursor: pointer;
+    transition: background .1s;
 }
-.btn-open-folder.ready:hover { background: #2ebd50; }
+.file-link-item:last-child { border-bottom: none; }
+.file-link-item:hover { background: #EBF4FF; }
+.file-link-icon { font-size: 13px; }
+.file-link-name { font-size: 12px; font-weight: 600; color: #0071E3; font-family: Consolas, monospace; }
 </style>
 </head>
 <body>
@@ -393,9 +402,10 @@ select {
       </div>
       <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
       <div class="log-area" id="logArea"></div>
-      <button class="btn-open-folder" id="btnOpenFolder" disabled style="display:none;">
-        📁 Open Folder
-      </button>
+      <div class="file-links" id="fileLinks">
+        <div class="file-links-header">DOWNLOADED FILES — click to open</div>
+        <div id="fileLinkList"></div>
+      </div>
     </div>
   </div>
 
@@ -409,8 +419,6 @@ let fyeMonth   = 12;
 let ticker     = '';
 let statuses   = {};
 
-// 始終顯示 Open Folder 按鈕（使用 File System Access API，Render 上也能用）
-document.getElementById('btnOpenFolder').style.display = '';
 
 // ── Folder（File System Access API handle，不是路徑字串）────
 let dirHandle  = null;   // FileSystemDirectoryHandle，指向使用者選的資料夾
@@ -722,6 +730,7 @@ async function doDownload() {
         const tickerDir = await dirHandle.getDirectoryHandle(ticker, { create: true });
 
         let firstHtmlFile = null;  // 記錄第一個成功下載的 HTML 檔名
+        const downloadedFiles = [];  // 收集所有成功下載的檔案
 
         for (let i = 0; i < total; i++) {
             const filing = selected[i];
@@ -762,10 +771,11 @@ async function doDownload() {
                 await htmlWritable.write(htmlBlob);
                 await htmlWritable.close();
 
-                // 記錄第一個成功的 HTML 檔
+                // 記錄成功的 HTML 檔
                 if (!firstHtmlFile) {
                     firstHtmlFile = { handle: htmlHandle, filename: htmlFilename };
                 }
+                downloadedFiles.push({ handle: htmlHandle, filename: htmlFilename });
 
                 setRowStat(filing.accession_number, '✓ Done', 'stat-done');
                 log(`✓ Saved ${mdFilename} + ${htmlFilename}`, 'success');
@@ -781,21 +791,27 @@ async function doDownload() {
 
         log(`✓ All done — saved to "${dirHandle.name}/${ticker}"`, 'success');
 
-        // 自動開啟第一個 HTML 檔（用瀏覽器開啟 print-to-PDF）
-        if (firstHtmlFile) {
-            try {
-                const url = URL.createObjectURL(await firstHtmlFile.handle.getFile());
-                window.open(url, '_blank');
-                log(`✓ Opened ${firstHtmlFile.filename} in browser (press Ctrl+P to save as PDF)`, 'success');
-            } catch (e) {
-                log(`ℹ Cannot auto-open HTML file: ${e.message}. Please manually open the .html file and press Ctrl+P to save as PDF.`, 'info');
+        // 顯示已下載檔案清單，每個都可點擊開啟
+        if (downloadedFiles.length > 0) {
+            const fileLinks = document.getElementById('fileLinks');
+            const fileLinkList = document.getElementById('fileLinkList');
+            fileLinkList.innerHTML = '';
+            for (const { handle, filename } of downloadedFiles) {
+                const item = document.createElement('div');
+                item.className = 'file-link-item';
+                item.innerHTML = `<span class="file-link-icon">📄</span><span class="file-link-name">${filename}</span>`;
+                item.addEventListener('click', async () => {
+                    try {
+                        const url = URL.createObjectURL(await handle.getFile());
+                        window.open(url, '_blank');
+                    } catch (e) {
+                        log(`✗ Cannot open ${filename}: ${e.message}`, 'error');
+                    }
+                });
+                fileLinkList.appendChild(item);
             }
+            fileLinks.style.display = 'block';
         }
-
-        // 啟用 Open Folder 按鈕
-        const openBtn = document.getElementById('btnOpenFolder');
-        openBtn.disabled = false;
-        openBtn.classList.add('ready');
     } catch (e) {
         log('✗ ' + e.message, 'error');
     } finally {
@@ -803,46 +819,6 @@ async function doDownload() {
     }
 }
 
-// Open Folder：用 File System Access API 開啟 ticker 資料夾（Render 環境也支援）
-document.getElementById('btnOpenFolder').addEventListener('click', async () => {
-    if (!dirHandle) {
-        alert('Please select a folder first (click Browse).');
-        return;
-    }
-    const btn = document.getElementById('btnOpenFolder');
-    btn.textContent = '📁 Opening…';
-    btn.disabled = true;
-    try {
-        // 取得 ticker 子資料夾的 handle
-        const tickerDir = await dirHandle.getDirectoryHandle(ticker);
-
-        // 使用 showDirectoryPicker({ startingHandle }) 在新視窗開啟該資料夾選擇器
-        // 這樣使用者能看到已下載的檔案列表
-        try {
-            // Chrome/Edge 94+ 支援 startingHandle 參數
-            await window.showDirectoryPicker({ startingHandle: tickerDir, mode: 'read' });
-            log(`✓ Opened folder: ${dirHandle.name}/${ticker}`, 'success');
-        } catch (e) {
-            // 如果瀏覽器不支援 startingHandle，列出檔案
-            const files = [];
-            for await (const [name, handle] of tickerDir.entries()) {
-                files.push(name);
-            }
-            log(`✓ Files in ${dirHandle.name}/${ticker}:\n  ${files.join('\n  ')}`, 'success');
-            alert(`Folder: ${dirHandle.name}/${ticker}\n\nFiles:\n${files.join('\n')}`);
-        }
-    } catch (e) {
-        if (e.name === 'NotFoundError') {
-            log(`ℹ No ${ticker} folder found yet. Download files first.`, 'info');
-            alert(`No "${ticker}" folder found. Please download files first.`);
-        } else {
-            log('✗ ' + e.message, 'error');
-        }
-    } finally {
-        btn.textContent = '📁 Open Folder';
-        btn.disabled = false;
-    }
-});
 
 function setRowStat(accNum, text, cls) {
     filtered.forEach((f, i) => {
