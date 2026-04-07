@@ -53,9 +53,9 @@ def browse_folder():
     data = request.json or {}
     new_path = data.get("path", "").strip()
 
-    # 調試：記錄收到的路徑
-    print(f"[browse_folder] Received path: {repr(new_path)}", flush=True)
-    print(f"[browse_folder] Current _download_dir before: {_download_dir}", flush=True)
+    debug_log = []
+    debug_log.append(f"Received path: {repr(new_path)}")
+    debug_log.append(f"Current _download_dir before: {_download_dir}")
 
     # 如果沒有提供路徑，檢查環境變數或使用預設
     if not new_path:
@@ -70,27 +70,39 @@ def browse_folder():
                 new_path = "/tmp/downloads"
             else:
                 new_path = str(DEFAULT_DOWNLOAD_DIR)
-        print(f"[browse_folder] Using default path: {new_path}", flush=True)
+        debug_log.append(f"Using default path: {new_path}")
 
     try:
         path_obj = Path(new_path).resolve()
-        print(f"[browse_folder] Resolved to: {path_obj}", flush=True)
+        debug_log.append(f"Resolved to: {path_obj}")
 
         # 確保資料夾存在
         path_obj.mkdir(parents=True, exist_ok=True)
+        debug_log.append(f"Folder created/verified")
 
         # 更新全局變數
         _download_dir = path_obj
-        print(f"[browse_folder] Updated _download_dir to: {_download_dir}", flush=True)
+        debug_log.append(f"Updated _download_dir to: {_download_dir}")
 
-        response = {"path": str(_download_dir), "ok": True}
-        print(f"[browse_folder] Returning: {response}", flush=True)
+        response = {"path": str(_download_dir), "ok": True, "debug": debug_log}
+        debug_log.append(f"Returning response with path: {_download_dir}")
+
+        # 同時列印到終端
+        for msg in debug_log:
+            print(f"[browse_folder] {msg}", flush=True)
+
         return jsonify(response)
     except Exception as e:
-        print(f"[browse_folder] Error: {e}", flush=True)
+        debug_log.append(f"Error: {e}")
         import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 400
+        tb = traceback.format_exc()
+        debug_log.append(f"Traceback: {tb}")
+
+        # 列印到終端
+        for msg in debug_log:
+            print(f"[browse_folder] {msg}", flush=True)
+
+        return jsonify({"error": str(e), "debug": debug_log}), 400
 
 
 @app.route("/api/open-folder")
