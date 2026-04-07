@@ -277,9 +277,12 @@ select {
     font-size: 11px;
     font-family: Consolas, monospace;
     color: #6E6E73;
-    white-space: nowrap;
+    white-space: normal;
     overflow: hidden;
     text-overflow: ellipsis;
+    word-break: break-all;
+    max-height: 2.4em;
+    line-height: 1.2em;
 }
 .btn-browse {
     background: none;
@@ -436,9 +439,8 @@ function setFolderDisplay(path) {
         console.log('Cannot save to localStorage');
     }
 
-    const parts = path.replace(/\\/g, '/').split('/');
-    const short = parts.slice(-2).join('/');
-    document.getElementById('folderPath').textContent = short || path;
+    // 顯示完整路徑，並在標題欄提示
+    document.getElementById('folderPath').textContent = path;
     document.getElementById('folderPath').title = path;
 }
 
@@ -486,14 +488,24 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
 async function getFullPath(dirHandle) {
     try {
         // 嘗試使用 path 屬性（在某些瀏覽器中支援）
-        if (dirHandle.name) {
-            // 如果只能獲得名稱，就用名稱代替
-            // 實際的檔案操作會透過 FileSystemDirectoryHandle 進行
+        if (dirHandle.path) {
+            return dirHandle.path;
+        }
+    } catch (e) {
+        console.log('Cannot get full path via path property');
+    }
+
+    // Fallback：使用 queryPermission 來獲取路徑資訊
+    try {
+        const permStatus = await dirHandle.queryPermission({ mode: 'read' });
+        if (permStatus === 'granted') {
+            // 取得資料夾名稱作為路徑
             return dirHandle.name;
         }
     } catch (e) {
-        console.log('Cannot get full path');
+        console.log('Cannot query permission');
     }
+
     return dirHandle.name || 'selected_folder';
 }
 
