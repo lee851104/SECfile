@@ -153,17 +153,19 @@ def _html_to_markdown(html: str) -> str:
 
 def convert_html_to_pdf_bytes(html: str) -> bytes | None:
     """
-    用 WeasyPrint 將 HTML 渲染為 PDF，回傳 bytes（不寫入檔案）。
+    用 xhtml2pdf 將 HTML 渲染為 PDF，回傳 bytes（不寫入檔案）。
     供 Web API 使用，直接回傳給瀏覽器下載。
     """
+    import io, sys
     try:
-        from weasyprint import HTML, CSS
-        pdf_bytes = HTML(string=html).write_pdf(
-            stylesheets=[CSS(string="@page { margin: 2cm 2.5cm; }")]
-        )
-        return pdf_bytes
+        from xhtml2pdf import pisa
+        buf = io.BytesIO()
+        result = pisa.CreatePDF(html, dest=buf, encoding='utf-8')
+        if result.err:
+            print(f"PDF conversion error: xhtml2pdf reported errors", file=sys.stderr)
+            return None
+        return buf.getvalue()
     except Exception as e:
-        import sys
         print(f"PDF conversion error: {e}", file=sys.stderr)
         return None
 
