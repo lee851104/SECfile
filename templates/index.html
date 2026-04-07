@@ -791,6 +791,18 @@ async function doDownload() {
 
         log(`✓ All done — saved to "${dirHandle.name}/${ticker}"`, 'success');
 
+        // 清理標記檔案
+        try {
+            const tickerDir = await dirHandle.getDirectoryHandle(ticker);
+            for await (const [name, handle] of tickerDir.entries()) {
+                if (name.startsWith('.sec_marker_')) {
+                    await tickerDir.removeEntry(name);
+                }
+            }
+        } catch (e) {
+            console.log('Cannot clean up marker files:', e);
+        }
+
         // 顯示已下載檔案清單，每個都可點擊開啟
         if (downloadedFiles.length > 0) {
             const fileLinks = document.getElementById('fileLinks');
