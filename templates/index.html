@@ -393,7 +393,7 @@ select {
       </div>
       <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
       <div class="log-area" id="logArea"></div>
-      <button class="btn-open-folder" id="btnOpenFolder" disabled>
+      <button class="btn-open-folder" id="btnOpenFolder" disabled style="display:none;">
         📁 Open Folder
       </button>
     </div>
@@ -408,6 +408,12 @@ let filtered   = [];
 let fyeMonth   = 12;
 let ticker     = '';
 let statuses   = {};
+
+// 檢測是否在本機（只有本機才能用 Open Folder）
+const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+if (isLocalhost) {
+    document.getElementById('btnOpenFolder').style.display = '';
+}
 
 // ── Folder（File System Access API handle，不是路徑字串）────
 let dirHandle  = null;   // FileSystemDirectoryHandle，指向使用者選的資料夾
