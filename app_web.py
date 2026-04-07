@@ -174,11 +174,18 @@ def start_download():
             on_progress = on_progress,
         )
         try:
+            on_log(f"Download folder: {_download_dir}", "info")
+            on_log(f"Downloading {len(filings)} files for {ticker}...", "info")
             dl.download_batch(ticker, filings, fye_month)
             folder = str(_download_dir / ticker.upper())
             q.put({"type": "done", "folder": folder})
         except Exception as e:
-            q.put({"type": "error", "msg": str(e)})
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            tb = traceback.format_exc()
+            q.put({"type": "error", "msg": error_msg})
+            print(f"Download error:\n{tb}", file=sys.stderr)
+            on_log(f"Error: {error_msg}", "error")
 
     t = threading.Thread(target=run, daemon=True)
     _tasks[task_id]["thread"] = t

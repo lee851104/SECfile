@@ -719,45 +719,54 @@ async function doDownload() {
 
 function streamProgress(taskId, selected) {
     const es = new EventSource(`/api/progress/${taskId}`);
+    let lastUpdate = Date.now();
 
     es.onmessage = e => {
-        const evt = JSON.parse(e.data);
-        if (evt.type === 'ping') return;
+        lastUpdate = Date.now();
+        try {
+            const evt = JSON.parse(e.data);
+            if (evt.type === 'ping') return;
 
-        if (evt.type === 'progress') {
-            const pct = evt.total > 0 ? (evt.done / evt.total * 100) : 0;
-            document.getElementById('barFill').style.width = pct + '%';
-            document.getElementById('progCount').textContent = `${evt.done} / ${evt.total}`;
-            if (evt.done < selected.length)
-                setRowStat(selected[evt.done].accession_number, '⬇ Downloading…', 'stat-active');
-            if (evt.done > 0)
-                setRowStat(selected[evt.done - 1].accession_number, '✓ Done', 'stat-done');
-        }
-        else if (evt.type === 'log') {
-            log(evt.msg, evt.level);
-        }
-        else if (evt.type === 'done') {
-            if (selected.length)
-                setRowStat(selected[selected.length - 1].accession_number, '✓ Done', 'stat-done');
-            document.getElementById('barFill').style.width = '100%';
-            log('✓ All downloads complete', 'success');
-            document.getElementById('btnDownload').disabled = false;
-            // 顯示「Open Folder」按鈕，指向下載的資料夾
-            if (evt.folder) setFolderDisplay(evt.folder);
-            const openBtn = document.getElementById('btnOpenFolder');
-            openBtn.disabled = false;
-            openBtn.classList.add('ready');
-            es.close();
-        }
-        else if (evt.type === 'error') {
-            log('✗ ' + evt.msg, 'error');
+            if (evt.type === 'progress') {
+                const pct = evt.total > 0 ? (evt.done / evt.total * 100) : 0;
+                document.getElementById('barFill').style.width = pct + '%';
+                document.getElementById('progCount').textContent = `${evt.done} / ${evt.total}`;
+                if (evt.done < selected.length)
+                    setRowStat(selected[evt.done].accession_number, '⬇ Downloading…', 'stat-active');
+                if (evt.done > 0)
+                    setRowStat(selected[evt.done - 1].accession_number, '✓ Done', 'stat-done');
+            }
+            else if (evt.type === 'log') {
+                log(evt.msg, evt.level);
+            }
+            else if (evt.type === 'done') {
+                if (selected.length)
+                    setRowStat(selected[selected.length - 1].accession_number, '✓ Done', 'stat-done');
+                document.getElementById('barFill').style.width = '100%';
+                log('✓ All downloads complete', 'success');
+                document.getElementById('btnDownload').disabled = false;
+                // 顯示「Open Folder」按鈕，指向下載的資料夾
+                if (evt.folder) setFolderDisplay(evt.folder);
+                const openBtn = document.getElementById('btnOpenFolder');
+                openBtn.disabled = false;
+                openBtn.classList.add('ready');
+                es.close();
+            }
+            else if (evt.type === 'error') {
+                log('✗ Error: ' + evt.msg, 'error');
+                document.getElementById('btnDownload').disabled = false;
+                es.close();
+            }
+        } catch (parseErr) {
+            log('✗ Message parse error: ' + parseErr.message, 'error');
+            console.error('Parse error:', parseErr, 'Raw data:', e.data);
             document.getElementById('btnDownload').disabled = false;
             es.close();
         }
     };
 
     es.onerror = () => {
-        log('Connection lost', 'warn');
+        log('✗ Connection lost (server timeout or error)', 'error');
         document.getElementById('btnDownload').disabled = false;
         es.close();
     };
