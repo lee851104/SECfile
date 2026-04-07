@@ -814,7 +814,9 @@ async function doDownload() {
                 item.innerHTML = `<span class="file-link-icon">📄</span><span class="file-link-name">${filename}</span>`;
                 item.addEventListener('click', async () => {
                     try {
-                        const url = URL.createObjectURL(await handle.getFile());
+                        const text = await (await handle.getFile()).text();
+                        const blob = new Blob([text], { type: 'text/html; charset=utf-8' });
+                        const url = URL.createObjectURL(blob);
                         window.open(url, '_blank');
                     } catch (e) {
                         log(`✗ Cannot open ${filename}: ${e.message}`, 'error');
