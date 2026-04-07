@@ -466,23 +466,29 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
             try {
                 const dirHandle = await window.showDirectoryPicker();
                 const fullPath = await getFullPath(dirHandle);
+                console.log('[btnBrowse] Selected path:', fullPath);
 
                 // 發送路徑到後端驗證
+                console.log('[btnBrowse] Sending path to server:', fullPath);
                 const r = await fetch('/api/browse-folder', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: fullPath })
                 });
                 const d = await r.json();
+                console.log('[btnBrowse] Server response:', d);
 
                 if (d.ok || d.path) {
+                    console.log('[btnBrowse] Setting folder display to:', d.path);
                     setFolderDisplay(d.path);
+                    log(`✓ Download folder set to: ${d.path}`, 'success');
                 } else {
                     alert('Error: ' + (d.error || 'Unknown error'));
                 }
             } catch (e) {
                 if (e.name !== 'AbortError') {
                     console.error('Error selecting folder:', e);
+                    log('✗ Could not select folder: ' + e.message, 'error');
                     // Fallback：顯示提示並使用預設路徑
                     alert('Could not select folder. Using default download folder.');
                     await loadFolder();

@@ -179,13 +179,13 @@ def _convert_html_to_pdf(html: str, output_path: Path) -> bool:
             except:
                 # 如果超時，也繼續（某些檔案可能卡住）
                 pass
+            # 注意：page.pdf() 不支援 timeout 參數，使用 PDF 生成的預設超時
             page.pdf(
                 path          = str(output_path),
                 format        = "A4",
                 margin        = {"top": "2cm", "bottom": "2cm",
                                  "left": "2.5cm", "right": "2.5cm"},
                 print_background = True,
-                timeout       = 30000,  # 加上 PDF 生成超時
             )
             browser.close()
         return True
