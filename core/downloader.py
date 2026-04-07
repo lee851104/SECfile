@@ -153,20 +153,139 @@ def _html_to_markdown(html: str) -> str:
 
 def convert_html_to_pdf_bytes(html: str) -> bytes | None:
     """
-    用 xhtml2pdf 將 HTML 渲染為 PDF，回傳 bytes（不寫入檔案）。
-    供 Web API 使用，直接回傳給瀏覽器下載。
+    用 reportlab 將清理後的 HTML 轉成 PDF。
+    解析 HTML，提取文字和表格，用 reportlab Paragraph/Table 排版。
     """
-    import io, sys
+    import io, sys, re
+    from html.parser import HTMLParser
+
     try:
-        from xhtml2pdf import pisa
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+        from reportlab.lib import colors
+
+        # 簡單 HTML 解析器：提取文字和表格
+        class SimpleHTMLParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.elements = []
+                self.current_text = ""
+                self.in_table = False
+                self.table_rows = []
+                self.table_cells = []
+                self.current_cell = ""
+                self.heading_level = 0
+
+            def handle_starttag(self, tag, attrs):
+                if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+                    if self.current_text:
+                        self.elements.append(('p', self.current_text.strip()))
+                        self.current_text = ""
+                    self.heading_level = int(tag[1])
+                elif tag == 'table':
+                    if self.current_text:
+                        self.elements.append(('p', self.current_text.strip()))
+                        self.current_text = ""
+                    self.in_table = True
+                    self.table_rows = []
+                elif tag == 'tr' and self.in_table:
+                    self.table_cells = []
+                elif tag in ('td', 'th') and self.in_table:
+                    self.current_cell = ""
+                elif tag == 'br':
+                    self.current_text += "\n"
+
+            def handle_endtag(self, tag):
+                if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+                    if self.current_text:
+                        self.elements.append((f'h{self.heading_level}', self.current_text.strip()))
+                        self.current_text = ""
+                    self.heading_level = 0
+                elif tag == 'p':
+                    if self.current_text:
+                        self.elements.append(('p', self.current_text.strip()))
+                        self.current_text = ""
+                elif tag == 'table':
+                    if self.table_rows:
+                        self.elements.append(('table', self.table_rows))
+                    self.in_table = False
+                    self.table_rows = []
+                elif tag == 'tr' and self.in_table:
+                    if self.table_cells:
+                        self.table_rows.append(self.table_cells)
+                elif tag in ('td', 'th') and self.in_table:
+                    self.table_cells.append(self.current_cell.strip())
+                    self.current_cell = ""
+
+            def handle_data(self, data):
+                text = data.strip()
+                if text:
+                    self.current_text += text + " "
+
+            def get_elements(self):
+                if self.current_text:
+                    self.elements.append(('p', self.current_text.strip()))
+                return self.elements
+
+        # 解析 HTML
+        parser = SimpleHTMLParser()
+        # 移除 <style> 和 <script>
+        html_clean = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        html_clean = re.sub(r'<script[^>]*>.*?</script>', '', html_clean, flags=re.DOTALL | re.IGNORECASE)
+        parser.feed(html_clean)
+        elements = parser.get_elements()
+
+        # 建立 reportlab 文件
         buf = io.BytesIO()
-        result = pisa.CreatePDF(html, dest=buf, encoding='utf-8')
-        if result.err:
-            print(f"PDF conversion error: xhtml2pdf reported errors", file=sys.stderr)
+        doc = SimpleDocTemplate(buf, pagesize=A4,
+                               topMargin=2*cm, bottomMargin=2*cm,
+                               leftMargin=2.5*cm, rightMargin=2.5*cm)
+
+        styles = getSampleStyleSheet()
+        story = []
+
+        # 轉換元素成 reportlab objects
+        for elem_type, content in elements:
+            if elem_type == 'p':
+                p = Paragraph(content[:500], styles['Normal'])  # 限制長度避免 overflow
+                story.append(p)
+                story.append(Spacer(1, 0.3*cm))
+            elif elem_type.startswith('h'):
+                level = int(elem_type[1])
+                style_name = ['Heading1', 'Heading2', 'Heading3', 'Heading4', 'Heading5', 'Heading6'][level-1]
+                h = Paragraph(content[:300], styles[style_name])
+                story.append(h)
+                story.append(Spacer(1, 0.2*cm))
+            elif elem_type == 'table' and content:
+                # 簡單表格（無複雜合併）
+                try:
+                    table = Table(content, colWidths=[None]*max(len(row) for row in content if row))
+                    table.setStyle(TableStyle([
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ]))
+                    story.append(table)
+                    story.append(Spacer(1, 0.3*cm))
+                except Exception:
+                    pass  # 表格格式不符，跳過
+
+        # 生成 PDF
+        if story:
+            doc.build(story)
+            return buf.getvalue()
+        else:
+            print(f"PDF conversion error: no content extracted", file=sys.stderr)
             return None
-        return buf.getvalue()
+
     except Exception as e:
         print(f"PDF conversion error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return None
 
 
