@@ -91,6 +91,36 @@ def _clean_xbrl(html: str) -> str:
     return html
 
 
+def _html_to_markdown(html: str) -> str:
+    """將 HTML 轉換為 Markdown，優先使用 html2text 套件。"""
+    try:
+        import html2text
+        h = html2text.HTML2Text()
+        h.ignore_links      = False
+        h.ignore_images     = True
+        h.body_width        = 0          # 不自動換行
+        h.single_line_break = True
+        return h.handle(html)
+    except ImportError:
+        pass
+
+    # Fallback：基本 regex 轉換
+    md = html
+    md = re.sub(r'<h1[^>]*>(.*?)</h1>', r'# \1\n', md, flags=re.DOTALL | re.IGNORECASE)
+    md = re.sub(r'<h2[^>]*>(.*?)</h2>', r'## \1\n', md, flags=re.DOTALL | re.IGNORECASE)
+    md = re.sub(r'<h3[^>]*>(.*?)</h3>', r'### \1\n', md, flags=re.DOTALL | re.IGNORECASE)
+    md = re.sub(r'<b[^>]*>(.*?)</b>', r'**\1**', md, flags=re.DOTALL | re.IGNORECASE)
+    md = re.sub(r'<strong[^>]*>(.*?)</strong>', r'**\1**', md, flags=re.DOTALL | re.IGNORECASE)
+    md = re.sub(r'<br\s*/?>', '\n', md, flags=re.IGNORECASE)
+    md = re.sub(r'<p[^>]*>', '\n', md, flags=re.IGNORECASE)
+    md = re.sub(r'</p>', '\n', md, flags=re.IGNORECASE)
+    md = re.sub(r'<tr[^>]*>', '\n', md, flags=re.IGNORECASE)
+    md = re.sub(r'<td[^>]*>|<th[^>]*>', ' | ', md, flags=re.IGNORECASE)
+    md = re.sub(r'<[^>]+>', '', md)
+    md = re.sub(r'\n{3,}', '\n\n', md)
+    return md.strip()
+
+
 class FilingDownloader:
     def __init__(
         self,
@@ -133,36 +163,24 @@ class FilingDownloader:
     def _download_one(
         self, ticker: str, filing: FilingRecord, fye_month: int
     ) -> tuple[Path, bool]:
-        """下載單一 Filing，回傳 (儲存路徑, 是否為PDF)。"""
+        """下載單一 Filing，回傳 (儲存路徑, 是否為HTM)。"""
         # 建立資料夾 downloads/AAPL/10-K/
         folder = self.output_root / ticker.upper() / filing.form_type
         folder.mkdir(parents=True, exist_ok=True)
 
-        filename = resolve_filename(filing, fye_month)   # e.g. "2024_FY.pdf"
-        pdf_path = folder / filename
-        htm_path = folder / filename.replace(".pdf", ".htm")
+        filename = resolve_filename(filing, fye_month)   # e.g. "2024_FY.md"
+        md_path  = folder / filename
 
         # 若已存在則跳過
-        if pdf_path.exists():
-            self.on_log(f"⊙ 已存在，跳過: {pdf_path.name}", "info")
-            return pdf_path, True
-        if htm_path.exists():
-            self.on_log(f"⊙ 已存在（HTM），跳過: {htm_path.name}", "info")
-            return htm_path, False
+        if md_path.exists():
+            self.on_log(f"⊙ 已存在，跳過: {md_path.name}", "info")
+            return md_path, True
 
-        # 取得文件 URL 並下載 HTML
+        # 取得文件 URL 並下載 HTML，轉為 Markdown
         url  = self.client.get_document_url(filing)
         html = self.client.download_html(url)
         html = _clean_xbrl(html)
 
-        # 嘗試 PDF 轉換
-        base_url = url.rsplit("/", 1)[0] + "/"
-        if _html_to_pdf(html, pdf_path, base_url):
-            return pdf_path, True
-        else:
-            # Fallback: 儲存 .htm
-            htm_path.write_text(html, encoding="utf-8")
-            self.on_log(
-                f"⚠ WeasyPrint 不可用，已儲存為 HTM: {htm_path.name}", "warn"
-            )
-            return htm_path, False
+        md = _html_to_markdown(html)
+        md_path.write_text(md, encoding="utf-8")
+        return md_path, True

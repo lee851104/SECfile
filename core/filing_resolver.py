@@ -54,8 +54,8 @@ def resolve_label(filing: FilingRecord, fye_month: int) -> str:
 
 
 def resolve_filename(filing: FilingRecord, fye_month: int) -> str:
-    """回傳完整檔名，例如 '2024_FY.pdf'"""
-    return resolve_label(filing, fye_month) + ".pdf"
+    """回傳完整檔名，例如 '2024_FY.md'"""
+    return resolve_label(filing, fye_month) + ".md"
 
 
 # ── 內部輔助 ──────────────────────────────────────────────
