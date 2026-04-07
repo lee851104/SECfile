@@ -43,35 +43,55 @@ def get_folder():
 
 @app.route("/api/browse-folder", methods=["POST"])
 def browse_folder():
-    """用 tkinter 開啟資料夾選擇器（僅在本地執行）。"""
+    """用 tkinter 開啟資料夾選擇器（本地執行）。"""
     global _download_dir
 
-    # 在 Render 等遠程環境上，tkinter 無法使用，所以回傳錯誤
     try:
         import tkinter as tk
         from tkinter import filedialog
+
+        result: dict = {}
+
+        def pick():
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes("-topmost", True)
+            path = filedialog.askdirectory(initialdir=str(_download_dir))
+            root.destroy()
+            result["path"] = path
+
+        t = threading.Thread(target=pick)
+        t.start()
+        t.join(timeout=60)
+
+        chosen = result.get("path")
+        if chosen:
+            _download_dir = Path(chosen).resolve()
+
+        return jsonify({"path": str(_download_dir), "support_browse": True})
     except ImportError:
-        return jsonify({"error": "Browse not available on this system", "path": str(_download_dir)}), 400
+        # 遠程環境無 tkinter，回傳現有路徑和標記
+        return jsonify({"path": str(_download_dir), "support_browse": False})
 
-    result: dict = {}
 
-    def pick():
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes("-topmost", True)
-        path = filedialog.askdirectory(initialdir=str(_download_dir))
-        root.destroy()
-        result["path"] = path
+@app.route("/api/set-folder", methods=["POST"])
+def set_folder():
+    """直接設定資料夾路徑（用於網頁輸入）。"""
+    global _download_dir
+    data = request.json or {}
+    new_path = data.get("path", "").strip()
 
-    t = threading.Thread(target=pick)
-    t.start()
-    t.join(timeout=60)
+    if not new_path:
+        return jsonify({"error": "Path cannot be empty"}), 400
 
-    chosen = result.get("path")
-    if chosen:
-        _download_dir = Path(chosen).resolve()
-
-    return jsonify({"path": str(_download_dir)})
+    try:
+        path_obj = Path(new_path).resolve()
+        # 確保資料夾存在
+        path_obj.mkdir(parents=True, exist_ok=True)
+        _download_dir = path_obj
+        return jsonify({"path": str(_download_dir), "ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 @app.route("/api/open-folder")
