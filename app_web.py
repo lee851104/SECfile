@@ -53,6 +53,9 @@ def browse_folder():
     data = request.json or {}
     new_path = data.get("path", "").strip()
 
+    # 調試：記錄收到的路徑
+    print(f"[browse_folder] Received path: {repr(new_path)}", file=sys.stderr)
+
     # 如果沒有提供路徑，檢查環境變數或使用預設
     if not new_path:
         env_path = os.environ.get("DOWNLOAD_DIR", "")
@@ -69,11 +72,16 @@ def browse_folder():
 
     try:
         path_obj = Path(new_path).resolve()
+        print(f"[browse_folder] Resolved to: {path_obj}", file=sys.stderr)
+
         # 確保資料夾存在
         path_obj.mkdir(parents=True, exist_ok=True)
         _download_dir = path_obj
+
+        print(f"[browse_folder] Set _download_dir to: {_download_dir}", file=sys.stderr)
         return jsonify({"path": str(_download_dir), "ok": True})
     except Exception as e:
+        print(f"[browse_folder] Error: {e}", file=sys.stderr)
         return jsonify({"error": str(e)}), 400
 
 
@@ -167,6 +175,9 @@ def start_download():
         def on_progress(done, total):
             q.put({"type": "progress", "done": done, "total": total})
 
+        # 調試：確認使用的路徑
+        print(f"[download] Using _download_dir: {_download_dir}", file=sys.stderr)
+
         dl = FilingDownloader(
             client      = _client,
             output_root = _download_dir,
@@ -174,7 +185,7 @@ def start_download():
             on_progress = on_progress,
         )
         try:
-            on_log(f"Download folder: {_download_dir}", "info")
+            on_log(f"Downloading to: {_download_dir}", "info")
             on_log(f"Downloading {len(filings)} files for {ticker}...", "info")
             dl.download_batch(ticker, filings, fye_month)
             folder = str(_download_dir / ticker.upper())
