@@ -3,6 +3,7 @@ SEC EDGAR REST API 客戶端
 負責：Ticker→CIK 查詢、取得 Filing 清單、建構文件 URL
 """
 
+import re
 import time
 import requests
 from dataclasses import dataclass
@@ -162,8 +163,19 @@ class EdgarClient:
                 # 增加超時時間到 30 秒（SEC 伺服器可能很慢）
                 resp = self.session.get(url, timeout=30)
                 resp.raise_for_status()
-                resp.encoding = resp.apparent_encoding or "utf-8"
-                return resp.text
+                # 先從 HTML meta charset 讀取編碼，再 fallback 到 apparent_encoding
+                raw = resp.content
+                meta_match = re.search(
+                    rb'<meta[^>]+charset=["\']?\s*([\w-]+)',
+                    raw[:4096], re.IGNORECASE
+                )
+                if meta_match:
+                    encoding = meta_match.group(1).decode("ascii", errors="ignore")
+                elif resp.apparent_encoding:
+                    encoding = resp.apparent_encoding
+                else:
+                    encoding = "utf-8"
+                return raw.decode(encoding, errors="replace")
             except requests.RequestException as e:
                 if attempt == MAX_RETRIES - 1:
                     raise
