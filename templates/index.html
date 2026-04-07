@@ -425,10 +425,21 @@ async function loadFolder() {
         console.log('localStorage not available');
     }
 
-    // 若沒有之前的選擇，從伺服器取得預設資料夾
-    const r = await fetch('/api/folder');
-    const d = await r.json();
-    setFolderDisplay(d.path);
+    // 若沒有之前的選擇，從伺服器取得預設資料夾（會自動建立）
+    try {
+        const r = await fetch('/api/browse-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: '' })
+        });
+        const d = await r.json();
+        if (d.ok || d.path) {
+            setFolderDisplay(d.path);
+        }
+    } catch (e) {
+        console.log('Cannot load default folder:', e);
+        setFolderDisplay('/tmp/downloads');
+    }
 }
 
 function setFolderDisplay(path) {
@@ -450,7 +461,7 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
     btn.disabled = true;
 
     try {
-        // 檢查瀏覽器是否支援 File System Access API
+        // 優先使用 File System Access API（本地 Chrome/Edge）
         if ('showDirectoryPicker' in window) {
             try {
                 const dirHandle = await window.showDirectoryPicker();
@@ -464,19 +475,22 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
                 });
                 const d = await r.json();
 
-                if (d.ok) {
+                if (d.ok || d.path) {
                     setFolderDisplay(d.path);
                 } else {
-                    alert('Error: ' + d.error);
+                    alert('Error: ' + (d.error || 'Unknown error'));
                 }
             } catch (e) {
                 if (e.name !== 'AbortError') {
-                    alert('Error selecting folder: ' + e.message);
+                    console.error('Error selecting folder:', e);
+                    // Fallback：顯示提示並使用預設路徑
+                    alert('Could not select folder. Using default download folder.');
+                    await loadFolder();
                 }
             }
         } else {
-            // 不支援 File System Access API，提示用戶
-            alert('Your browser does not support folder selection. Please use Chromium-based browsers (Chrome, Edge, etc.)');
+            // Render 或其他環境：不支援 File System Access API
+            alert('Folder selection not available.\n\nThe application will use the default download folder: ' + lastFolder);
         }
     } finally {
         btn.textContent = 'Browse';
@@ -487,7 +501,7 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
 // 嘗試取得資料夾的完整路徑
 async function getFullPath(dirHandle) {
     try {
-        // 嘗試使用 path 屬性（在某些瀏覽器中支援）
+        // 嘗試使用 path 屬性（在 Chrome/Edge 中支援）
         if (dirHandle.path) {
             return dirHandle.path;
         }
@@ -495,17 +509,7 @@ async function getFullPath(dirHandle) {
         console.log('Cannot get full path via path property');
     }
 
-    // Fallback：使用 queryPermission 來獲取路徑資訊
-    try {
-        const permStatus = await dirHandle.queryPermission({ mode: 'read' });
-        if (permStatus === 'granted') {
-            // 取得資料夾名稱作為路徑
-            return dirHandle.name;
-        }
-    } catch (e) {
-        console.log('Cannot query permission');
-    }
-
+    // Fallback：使用資料夾名稱
     return dirHandle.name || 'selected_folder';
 }
 

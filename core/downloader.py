@@ -236,6 +236,9 @@ class FilingDownloader:
     def _download_one(
         self, ticker: str, filing: FilingRecord, fye_month: int
     ) -> tuple[Path, bool]:
+        # 確保根目錄存在
+        self.output_root.mkdir(parents=True, exist_ok=True)
+
         folder = self.output_root / ticker.upper() / filing.form_type
         folder.mkdir(parents=True, exist_ok=True)
 

@@ -24,6 +24,8 @@ app = Flask(__name__)
 _client = EdgarClient()
 # 支援環境變數設定下載資料夾 (用於遠程部署)
 _download_dir = Path(os.environ.get("DOWNLOAD_DIR", DEFAULT_DOWNLOAD_DIR)).resolve()
+# 確保下載資料夾存在
+_download_dir.mkdir(parents=True, exist_ok=True)
 
 # 進行中的下載任務：task_id -> {"queue": Queue, "thread": Thread}
 _tasks: dict[str, dict] = {}
@@ -43,15 +45,27 @@ def get_folder():
 
 @app.route("/api/browse-folder", methods=["POST"])
 def browse_folder():
-    """用瀏覽器的 File System Access API 選擇資料夾（Chromium 可用）。"""
+    """設定下載資料夾路徑。支援：
+    1. 本地執行：File System Access API 選擇的路徑
+    2. Render：使用環境變數或預設路徑
+    """
     global _download_dir
-    # 此 API 由前端的 JavaScript 直接調用瀏覽器功能
-    # 後端只需回傳確認收到新路徑並驗證
     data = request.json or {}
     new_path = data.get("path", "").strip()
 
+    # 如果沒有提供路徑，檢查環境變數或使用預設
     if not new_path:
-        return jsonify({"error": "Path cannot be empty"}), 400
+        env_path = os.environ.get("DOWNLOAD_DIR", "")
+        if env_path:
+            new_path = env_path
+        else:
+            # 在 Render 上，使用 /tmp/downloads
+            import socket
+            is_render = "render" in socket.getfqdn().lower() or os.environ.get("RENDER")
+            if is_render:
+                new_path = "/tmp/downloads"
+            else:
+                new_path = str(DEFAULT_DOWNLOAD_DIR)
 
     try:
         path_obj = Path(new_path).resolve()
