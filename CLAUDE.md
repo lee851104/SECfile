@@ -30,8 +30,11 @@ SEC EDGAR Downloader is a Tkinter-based GUI application for downloading SEC fina
 
 4. **`core/downloader.py`** — Filing download and format conversion
    - `FilingDownloader.download_batch()`: batch download with progress callbacks
-   - `_clean_xbrl()`: removes XBRL metadata, scripts, styles, and `<ix:*>` namespace elements
-   - `_html_to_markdown()`: converts cleaned HTML → Markdown (uses `html2text` library with regex fallback)
+   - `_clean_xbrl()`: removes hidden XBRL `<div style="display:none">` blocks and `<ix:*>` namespace elements
+   - `_prepare_html_for_pdf(html, base_url, session)`: strips scripts/styles, embeds images as base64 (using edgar client session to bypass SEC 403), injects clean CSS
+   - `_convert_html_to_pdf(html, path)`: renders HTML to PDF via Playwright (Chromium)
+   - `_html_to_markdown()`: converts cleaned HTML → Markdown with `ignore_tables=True` (no `---|---` artifacts)
+   - Each filing outputs two files: `2024_FY.pdf` (readable) + `2024_FY.md` (plain text)
    - Downloaded files stored in `downloads/TICKER/FORM_TYPE/` directory
 
 5. **`utils/constants.py`** — Global configuration
@@ -50,17 +53,25 @@ Different companies have different fiscal year ends (Apple: Sept, NVIDIA: Jan). 
 ### iXBRL Cleaning
 
 SEC filings use inline XBRL (iXBRL) for structured data. The HTML contains:
-- `<ix:hidden>` blocks with raw XBRL values (us-gaap:*, iso4217:USD, etc.)
-- Namespace declarations (`xmlns:xbrli`, `xmlns:us-gaap`, etc.)
-- These create gibberish when converted naively
+- `<div style="display:none">` blocks with XBRL unit/context definitions (biggest source of gibberish)
+- `<ix:hidden>` blocks with raw XBRL values
+- `<xbrli:*>`, `<link:*>` namespace tags and `xmlns:*` declarations
 
-`_clean_xbrl()` removes these completely before conversion to Markdown.
+`_clean_xbrl()` removes all of these before conversion, preserving only visible business content.
 
-### HTML → Markdown Conversion
+### HTML → PDF Conversion (primary output)
 
-- Primary: `html2text` library (installed via requirements)
-- Fallback: regex-based conversion if library unavailable
-- Output: readable Markdown in `downloads/TICKER/FORM_TYPE/2024_FY.md`
+- Uses **Playwright (Chromium)** to render cleaned HTML directly to PDF
+- Images (company logos etc.) are downloaded via `EdgarClient.session` and embedded as base64 — necessary because SEC returns 403 to headless browser requests
+- Original SEC inline `style=""` attributes are preserved (they carry table border info)
+- External `<style>` blocks are stripped and replaced with a minimal clean CSS
+- Output: `downloads/TICKER/FORM_TYPE/2024_FY.pdf`
+
+### HTML → Markdown Conversion (secondary output)
+
+- Uses `html2text` with `ignore_tables=True` to avoid `---|---` table artifacts
+- Useful for text search or LLM ingestion
+- Output: `downloads/TICKER/FORM_TYPE/2024_FY.md`
 
 ## Running the Application
 
@@ -80,9 +91,10 @@ pip install html2text  # for best Markdown conversion quality
 
 Core requirements:
 - `requests` — SEC EDGAR API calls
-- `reportlab` — PDF utilities (legacy, may be removed)
-- `Pillow` — Image support (legacy)
-- `html2text` — iXBRL→Markdown conversion
+- `html2text` — HTML→Markdown conversion
+- `playwright` — Chromium-based HTML→PDF rendering (run `py -m playwright install chromium` after pip install)
+- `beautifulsoup4` + `lxml` — HTML parsing utilities
+- `Pillow` — Image support
 
 ## Common Tasks
 
@@ -110,6 +122,10 @@ Check:
 
 ## Recent Changes
 
-- **Apr 7**: Switched from PDF/HTM output to `.md` Markdown format
-  - Removed WeasyPrint/reportlab PDF conversion complexity
-  - Now uses `html2text` for clean, readable output
+- **Apr 7**: Switched to Playwright-based HTML→PDF rendering
+  - Each download now produces both `.pdf` (readable) and `.md` (plain text)
+  - PDF uses Playwright/Chromium to render HTML directly — preserves tables, headings, logos
+  - Images embedded as base64 (SEC blocks headless browser image requests with 403)
+  - XBRL cleaning improved: removes hidden `<div style="display:none">` blocks (was the main source of gibberish)
+  - `edgar_client.get_document_url()` now checks filing index for best .htm file
+  - Removed: WeasyPrint, reportlab, markdown-pdf (all had Windows compatibility issues)
