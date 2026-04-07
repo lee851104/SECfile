@@ -718,6 +718,8 @@ async function doDownload() {
         // 在使用者選的資料夾內建立 ticker 子資料夾
         const tickerDir = await dirHandle.getDirectoryHandle(ticker, { create: true });
 
+        let firstHtmlFile = null;  // 記錄第一個成功下載的 HTML 檔名
+
         for (let i = 0; i < total; i++) {
             const filing = selected[i];
             setRowStat(filing.accession_number, '⬇ Downloading…', 'stat-active');
@@ -757,6 +759,11 @@ async function doDownload() {
                 await htmlWritable.write(htmlBlob);
                 await htmlWritable.close();
 
+                // 記錄第一個成功的 HTML 檔
+                if (!firstHtmlFile) {
+                    firstHtmlFile = { handle: htmlHandle, filename: htmlFilename };
+                }
+
                 setRowStat(filing.accession_number, '✓ Done', 'stat-done');
                 log(`✓ Saved ${mdFilename} + ${htmlFilename}`, 'success');
             } catch (e) {
@@ -770,6 +777,17 @@ async function doDownload() {
         }
 
         log(`✓ All done — saved to "${dirHandle.name}/${ticker}"`, 'success');
+
+        // 自動開啟第一個 HTML 檔（用瀏覽器開啟 print-to-PDF）
+        if (firstHtmlFile) {
+            try {
+                const url = URL.createObjectURL(await firstHtmlFile.handle.getFile());
+                window.open(url, '_blank');
+                log(`✓ Opened ${firstHtmlFile.filename} in browser (press Ctrl+P to save as PDF)`, 'success');
+            } catch (e) {
+                log(`ℹ Cannot auto-open HTML file: ${e.message}. Please manually open the .html file and press Ctrl+P to save as PDF.`, 'info');
+            }
+        }
 
         // 啟用 Open Folder 按鈕
         const openBtn = document.getElementById('btnOpenFolder');

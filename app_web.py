@@ -15,7 +15,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, render_template, request
 
 from core.edgar_client import EdgarClient, FilingRecord, fuzzy_search
-from core.downloader import _clean_xbrl, _prepare_html_for_pdf, convert_html_to_pdf_bytes
+from core.downloader import _clean_xbrl, _prepare_html_for_pdf
 from core.filing_resolver import infer_fiscal_year_end_month, resolve_filename
 
 app = Flask(__name__)
