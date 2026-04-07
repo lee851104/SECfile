@@ -113,27 +113,45 @@ class EdgarClient:
     def get_document_url(self, filing: FilingRecord) -> str:
         """
         建構並回傳主文件（.htm）的完整下載 URL。
+        優先級：非 iXBRL 的 .htm > primary_document > index.json 查詢
         """
         acc_clean = filing.accession_number.replace("-", "")
-        # 優先使用已知的 primary_document
+
+        # 先查 index.json，尋找非 iXBRL 版本
+        try:
+            index_url = (
+                f"{SEC_ARCHIVES_URL}/{filing.cik}"
+                f"/{acc_clean}/{filing.accession_number}-index.json"
+            )
+            index_data = self._get_json(index_url)
+            docs = index_data.get("documents", [])
+
+            # 優先級 1：找合適的 .htm 檔（不含 iXBRL 路徑）
+            for doc in docs:
+                filename = doc.get("filename", "")
+                doc_type = doc.get("type", "")
+                # 跳過 iXBRL 版本（通常在子目錄或特定名稱）
+                if filename.endswith(".htm") and not "ixbrl" in filename.lower():
+                    if doc_type in (filing.form_type, ""):
+                        return f"{SEC_ARCHIVES_URL}/{filing.cik}/{acc_clean}/{filename}"
+
+            # 優先級 2：如果只有 iXBRL，也可用（會做清理）
+            for doc in docs:
+                filename = doc.get("filename", "")
+                doc_type = doc.get("type", "")
+                if filename.endswith(".htm"):
+                    if doc_type in (filing.form_type, ""):
+                        return f"{SEC_ARCHIVES_URL}/{filing.cik}/{acc_clean}/{filename}"
+        except Exception:
+            pass
+
+        # 優先級 3：使用 primary_document 作為 fallback
         if filing.primary_document:
             return (
                 f"{SEC_ARCHIVES_URL}/{filing.cik}"
                 f"/{acc_clean}/{filing.primary_document}"
             )
-        # 否則查 index JSON
-        index_url = (
-            f"{SEC_ARCHIVES_URL}/{filing.cik}"
-            f"/{acc_clean}/{filing.accession_number}-index.json"
-        )
-        index_data = self._get_json(index_url)
-        docs = index_data.get("documents", [])
-        for doc in docs:
-            if doc.get("type", "") in (filing.form_type, ""):
-                return (
-                    f"{SEC_ARCHIVES_URL}/{filing.cik}"
-                    f"/{acc_clean}/{doc['filename']}"
-                )
+
         raise ValueError(f"找不到 {filing.accession_number} 的主文件")
 
     def download_html(self, url: str) -> str:
