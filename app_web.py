@@ -59,7 +59,7 @@ def browse_folder():
     debug_log.append(f"Current _download_dir before: {_download_dir}")
 
     # 檢查是否只收到資料夾名稱（沒有完整路徑）
-    is_folder_name_only = new_path and not ((':\\' in new_path) or new_path.startswith('/')):
+    is_folder_name_only = new_path and not ((':\\' in new_path) or new_path.startswith('/'))
     if is_folder_name_only:
         debug_log.append(f"⚠ Received folder name only: {new_path}")
         debug_log.append(f"ℹ Browser File System Access API cannot provide full path in this configuration")
