@@ -412,9 +412,14 @@ let statuses   = {};
 // ── Folder（File System Access API handle，不是路徑字串）────
 let dirHandle  = null;   // FileSystemDirectoryHandle，指向使用者選的資料夾
 let markerId   = null;   // 用於 open-folder 的標記 ID
+let folderPath = null;   // 伺服器解析出的完整 OS 路徑（存 localStorage）
 
 // 嘗試從 IndexedDB 還原上次的 handle（頁面刷新後仍有效）
 async function restoreDirHandle() {
+    // 還原完整路徑（localStorage，跨刷新有效）
+    folderPath = localStorage.getItem('sec_folder_path') || null;
+    markerId   = localStorage.getItem('sec_marker_id')   || null;
+
     try {
         const db = await openHandleDB();
         const stored = await dbGet(db, 'dirHandle');
@@ -497,7 +502,10 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
             });
             const d = await r.json();
             if (d.ok) {
-                markerId = id;
+                markerId   = id;
+                folderPath = d.path;
+                localStorage.setItem('sec_marker_id',   id);
+                localStorage.setItem('sec_folder_path', d.path);
                 console.log('Folder registered, full path:', d.path);
             }
         } catch (e) {
@@ -764,15 +772,41 @@ async function doDownload() {
 
 // Open Folder：呼叫後端用 os.startfile 開啟 ticker 子資料夾
 document.getElementById('btnOpenFolder').addEventListener('click', async () => {
-    if (!markerId) {
-        alert(`Files saved to: ${dirHandle?.name ?? ''}/${ticker}\n\nPlease re-select the folder with Browse to enable direct open.`);
+    if (!dirHandle) {
+        alert('Please select a folder first (click Browse).');
         return;
     }
+    const btn = document.getElementById('btnOpenFolder');
+    btn.textContent = '📁 Opening…';
+    btn.style.pointerEvents = 'none';
     try {
+        // 每次點擊都重新寫 marker + register，確保伺服器有最新路徑
+        // （即使之前 register 失敗、或伺服器重啟後 cache 消失，都能正確運作）
+        const id = crypto.randomUUID();
+        const markerFile = await dirHandle.getFileHandle(`.sec_marker_${id}`, { create: true });
+        const writable = await markerFile.createWritable();
+        await writable.write('sec-downloader-marker');
+        await writable.close();
+
+        const regResp = await fetch('/api/register-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ marker_id: id }),
+        });
+        const regData = await regResp.json();
+        if (!regData.ok) {
+            log('✗ Cannot locate folder on server: ' + (regData.error || ''), 'error');
+            return;
+        }
+        folderPath = regData.path;
+        markerId   = id;
+        localStorage.setItem('sec_folder_path', folderPath);
+        localStorage.setItem('sec_marker_id',   id);
+
         const r = await fetch('/api/open-folder', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ marker_id: markerId, ticker }),
+            body: JSON.stringify({ folder_path: folderPath, ticker }),
         });
         const d = await r.json();
         if (!d.ok) {
@@ -780,6 +814,9 @@ document.getElementById('btnOpenFolder').addEventListener('click', async () => {
         }
     } catch (e) {
         log('✗ ' + e.message, 'error');
+    } finally {
+        btn.textContent = '📁 Open Folder';
+        btn.style.pointerEvents = '';
     }
 });
 

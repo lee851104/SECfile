@@ -90,13 +90,20 @@ def register_folder():
 @app.route("/api/open-folder", methods=["POST"])
 def open_folder():
     """用快取的完整路徑在 OS 中開啟資料夾。"""
-    data      = request.json or {}
-    marker_id = data.get("marker_id", "")
-    ticker    = data.get("ticker", "")
+    data        = request.json or {}
+    marker_id   = data.get("marker_id", "")
+    folder_path = data.get("folder_path", "")   # 前端直接傳路徑（優先）
+    ticker      = data.get("ticker", "")
 
-    base_path = _folder_cache.get(marker_id, "")
+    # 優先用前端傳來的路徑；若沒有則從快取查
+    base_path = folder_path or _folder_cache.get(marker_id, "")
     if not base_path:
         return jsonify({"error": "Folder path not found. Please re-select the folder."}), 404
+
+    # 基本安全檢查：路徑必須是絕對路徑
+    p = Path(base_path)
+    if not p.is_absolute():
+        return jsonify({"error": "Invalid folder path."}), 400
 
     target = Path(base_path) / ticker if ticker else Path(base_path)
     target.mkdir(parents=True, exist_ok=True)
