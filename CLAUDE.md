@@ -40,23 +40,29 @@ The server **never saves files to disk**. Instead:
    - `.html` file — user opens in browser, presses Ctrl+P to save as PDF (browser's native print-to-PDF)
    - `.md` file — plaintext for searching/editing
 5. A `ticker/` subfolder is created automatically inside the user's chosen folder
-6. First `.html` file auto-opens in new browser tab with prompt to print
+6. After download completes, the frontend lists all downloaded `.html` files as clickable links (opens via `createObjectURL` with explicit `charset=utf-8` to avoid garbled text)
 
 **Why browser print-to-PDF?** Server-side PDF generation (Playwright, WeasyPrint, xhtml2pdf) all require system C libraries or Chromium, which fail on Render free tier. Browser rendering is the only approach that's reliable and dependency-free.
 
-### Folder Path Resolution (Open Folder button — localhost only)
+### File System Access API (frontend)
 
-Browsers cannot expose full OS paths from `showDirectoryPicker()`. The workaround:
+`dirHandle` — `FileSystemDirectoryHandle` pointing to the user's chosen folder. Persisted in **IndexedDB** so it survives page refresh. Key operations:
 
-1. On Browse, frontend writes a `.sec_marker_<uuid>` file into the selected folder
+- `dirHandle.getDirectoryHandle(ticker, { create: true })` — creates ticker subfolder
+- `handle.createWritable()` → write Blob → `close()` — writes file to disk
+- When opening saved HTML for display: read via `file.text()` and re-wrap as `new Blob([text], { type: 'text/html; charset=utf-8' })` before `createObjectURL` — this is required to prevent garbled characters
+- Marker files (`.sec_marker_<uuid>`) are written to the parent folder then cleaned up after download
+
+### Marker File / Open Folder Flow (localhost only)
+
+Browsers cannot expose full OS paths from `showDirectoryPicker()`. The workaround (used only on localhost for `os.startfile()`):
+
+1. Frontend writes `.sec_marker_<uuid>` into the selected folder
 2. Frontend calls `POST /api/register-folder` with the UUID
-3. Server searches `~/Desktop`, `~/Downloads`, `~/Documents`, `~`, and all drive roots (Windows) up to 4 levels deep
-4. Server caches `uuid → full_path` in `_folder_cache` dict (in-memory) and returns `path`
-5. Frontend stores `folderPath` and `markerId` in `localStorage` (survives page refresh)
-6. On "Open Folder" click, frontend writes fresh marker and re-registers (robust against server restarts)
-7. Server calls `os.startfile()` / `open` / `xdg-open`
+3. Server searches common locations up to 4 levels deep, caches `uuid → full_path`
+4. Server calls `os.startfile()` / `open` / `xdg-open`
 
-**Render limitation:** Open Folder button is hidden on Render (detected via `window.location.hostname`). Works only on localhost because `os.startfile()` runs on server and cannot access user's local paths.
+This feature is **not available on Render** — the Open Folder button was removed; instead, downloaded files are listed as clickable links in the UI.
 
 ### API Routes
 
@@ -64,8 +70,8 @@ Browsers cannot expose full OS paths from `showDirectoryPicker()`. The workaroun
 |---|---|---|
 | `/api/search` | GET | Ticker → CIK → filings list + fye_month |
 | `/api/autocomplete` | GET | Fuzzy search against POPULAR_TICKERS |
-| `/api/get-filing` | POST | Returns JSON with `html` (for print) + `markdown` (plaintext) + filenames |
-| `/api/register-folder` | POST | Finds marker file → caches full path, returns `path` |
+| `/api/get-filing` | POST | Returns JSON with `html` + `markdown` + filenames |
+| `/api/register-folder` | POST | Finds marker file → caches full path (localhost only) |
 | `/api/open-folder` | POST | Opens folder in OS file explorer (localhost only) |
 
 ## Core Modules
@@ -73,13 +79,13 @@ Browsers cannot expose full OS paths from `showDirectoryPicker()`. The workaroun
 ### `core/edgar_client.py`
 - `EdgarClient.get_cik(ticker)` — downloads and caches full `company_tickers.json` (~1.5 MB) on first call
 - `EdgarClient.get_document_url(filing)` — queries filing's `index.json`; prefers non-iXBRL `.htm`
-- `EdgarClient.download_html(url)` — retries up to `MAX_RETRIES` with exponential backoff, 30s timeout
-- `EdgarClient.session` — `requests.Session` with SEC-required User-Agent header; passed to image embedding so SEC doesn't block 403
+- `EdgarClient.download_html(url)` — retries up to `MAX_RETRIES` with exponential backoff, 30s timeout. Encoding detection order: HTML `<meta charset>` tag → `apparent_encoding` → `utf-8`
+- `EdgarClient.session` — `requests.Session` with SEC-required User-Agent header
 - Rate limiting: 0.15s between requests
 
 ### `core/downloader.py`
 - `_clean_xbrl(html)` — removes `display:none` divs, `<ix:*>` tags, XML namespaces
-- `_prepare_html_for_pdf(html, base_url, session)` — strips `<script>`/`<style>`, embeds images as base64 (SEC blocks headless browser requests), injects `_PDF_CSS`
+- `_prepare_html_for_pdf(html, base_url, session)` — strips `<script>`/`<style>`, embeds images as base64, injects `_PDF_CSS`
 - `_html_to_markdown(html)` — converts to plaintext (used for `.md` file)
 - Desktop app's `FilingDownloader.download_batch()` writes `.pdf` + `.md` to disk — not used by web app
 
@@ -104,7 +110,7 @@ Example: NVIDIA FYE=January, report_date=2025-04 → FY2026_Q1.
 - Start: `gunicorn app_web:app`
 - `PORT` env var respected; `DOWNLOAD_DIR` unused (files go to browser)
 
-Open Folder feature disabled on Render (auto-detected via hostname check).
+Render URL: https://secfile.onrender.com
 
 ## Key Constants (`utils/constants.py`)
 
