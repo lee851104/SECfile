@@ -409,11 +409,8 @@ let fyeMonth   = 12;
 let ticker     = '';
 let statuses   = {};
 
-// 檢測是否在本機（只有本機才能用 Open Folder）
-const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-if (isLocalhost) {
-    document.getElementById('btnOpenFolder').style.display = '';
-}
+// 始終顯示 Open Folder 按鈕（使用 File System Access API，Render 上也能用）
+document.getElementById('btnOpenFolder').style.display = '';
 
 // ── Folder（File System Access API handle，不是路徑字串）────
 let dirHandle  = null;   // FileSystemDirectoryHandle，指向使用者選的資料夾
@@ -806,7 +803,7 @@ async function doDownload() {
     }
 }
 
-// Open Folder：呼叫後端用 os.startfile 開啟 ticker 子資料夾
+// Open Folder：用 File System Access API 開啟 ticker 資料夾（Render 環境也支援）
 document.getElementById('btnOpenFolder').addEventListener('click', async () => {
     if (!dirHandle) {
         alert('Please select a folder first (click Browse).');
@@ -814,45 +811,36 @@ document.getElementById('btnOpenFolder').addEventListener('click', async () => {
     }
     const btn = document.getElementById('btnOpenFolder');
     btn.textContent = '📁 Opening…';
-    btn.style.pointerEvents = 'none';
+    btn.disabled = true;
     try {
-        // 每次點擊都重新寫 marker + register，確保伺服器有最新路徑
-        // （即使之前 register 失敗、或伺服器重啟後 cache 消失，都能正確運作）
-        const id = crypto.randomUUID();
-        const markerFile = await dirHandle.getFileHandle(`.sec_marker_${id}`, { create: true });
-        const writable = await markerFile.createWritable();
-        await writable.write('sec-downloader-marker');
-        await writable.close();
+        // 取得 ticker 子資料夾的 handle
+        const tickerDir = await dirHandle.getDirectoryHandle(ticker);
 
-        const regResp = await fetch('/api/register-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ marker_id: id }),
-        });
-        const regData = await regResp.json();
-        if (!regData.ok) {
-            log('✗ Cannot locate folder on server: ' + (regData.error || ''), 'error');
-            return;
-        }
-        folderPath = regData.path;
-        markerId   = id;
-        localStorage.setItem('sec_folder_path', folderPath);
-        localStorage.setItem('sec_marker_id',   id);
-
-        const r = await fetch('/api/open-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folder_path: folderPath, ticker }),
-        });
-        const d = await r.json();
-        if (!d.ok) {
-            log('✗ ' + (d.error || 'Cannot open folder'), 'error');
+        // 使用 showDirectoryPicker({ startingHandle }) 在新視窗開啟該資料夾選擇器
+        // 這樣使用者能看到已下載的檔案列表
+        try {
+            // Chrome/Edge 94+ 支援 startingHandle 參數
+            await window.showDirectoryPicker({ startingHandle: tickerDir, mode: 'read' });
+            log(`✓ Opened folder: ${dirHandle.name}/${ticker}`, 'success');
+        } catch (e) {
+            // 如果瀏覽器不支援 startingHandle，列出檔案
+            const files = [];
+            for await (const [name, handle] of tickerDir.entries()) {
+                files.push(name);
+            }
+            log(`✓ Files in ${dirHandle.name}/${ticker}:\n  ${files.join('\n  ')}`, 'success');
+            alert(`Folder: ${dirHandle.name}/${ticker}\n\nFiles:\n${files.join('\n')}`);
         }
     } catch (e) {
-        log('✗ ' + e.message, 'error');
+        if (e.name === 'NotFoundError') {
+            log(`ℹ No ${ticker} folder found yet. Download files first.`, 'info');
+            alert(`No "${ticker}" folder found. Please download files first.`);
+        } else {
+            log('✗ ' + e.message, 'error');
+        }
     } finally {
         btn.textContent = '📁 Open Folder';
-        btn.style.pointerEvents = '';
+        btn.disabled = false;
     }
 });
 
