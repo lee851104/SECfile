@@ -410,7 +410,8 @@ let ticker     = '';
 let statuses   = {};
 
 // ── Folder（File System Access API handle，不是路徑字串）────
-let dirHandle = null;   // FileSystemDirectoryHandle，指向使用者選的資料夾
+let dirHandle  = null;   // FileSystemDirectoryHandle，指向使用者選的資料夾
+let markerId   = null;   // 用於 open-folder 的標記 ID
 
 // 嘗試從 IndexedDB 還原上次的 handle（頁面刷新後仍有效）
 async function restoreDirHandle() {
@@ -478,6 +479,29 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
             await dbPut(db, 'dirHandle', handle);
         } catch (e) {
             console.log('Cannot persist dir handle:', e);
+        }
+
+        // 寫入標記檔案，讓伺服器找到完整路徑（用於 Open Folder）
+        try {
+            const id = crypto.randomUUID();
+            const markerFile = await handle.getFileHandle(`.sec_marker_${id}`, { create: true });
+            const writable = await markerFile.createWritable();
+            await writable.write('sec-downloader-marker');
+            await writable.close();
+
+            // 告知伺服器去找這個標記
+            const r = await fetch('/api/register-folder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ marker_id: id }),
+            });
+            const d = await r.json();
+            if (d.ok) {
+                markerId = id;
+                console.log('Folder registered, full path:', d.path);
+            }
+        } catch (e) {
+            console.log('Cannot register folder path:', e);
         }
 
         log(`✓ Save folder: ${handle.name}`, 'success');
@@ -738,19 +762,24 @@ async function doDownload() {
     }
 }
 
-// Open Folder：用 File System Access API 在瀏覽器內顯示 ticker 子資料夾
+// Open Folder：呼叫後端用 os.startfile 開啟 ticker 子資料夾
 document.getElementById('btnOpenFolder').addEventListener('click', async () => {
-    if (!dirHandle) return;
+    if (!markerId) {
+        alert(`Files saved to: ${dirHandle?.name ?? ''}/${ticker}\n\nPlease re-select the folder with Browse to enable direct open.`);
+        return;
+    }
     try {
-        // 取得 ticker 子資料夾的 handle 並讓使用者在系統內開啟
-        const tickerDir = await dirHandle.getDirectoryHandle(ticker, { create: false });
-
-        // 瀏覽器無法直接呼叫 OS 開資料夾，改為用 showDirectoryPicker 導向
-        // 最佳替代方案：顯示明確的路徑提示
-        const msg = `Files saved to:\n📁 ${dirHandle.name} / ${ticker}\n\nTo open: go to the folder you selected (${dirHandle.name}) and look for the "${ticker}" subfolder.`;
-        alert(msg);
+        const r = await fetch('/api/open-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ marker_id: markerId, ticker }),
+        });
+        const d = await r.json();
+        if (!d.ok) {
+            log('✗ ' + (d.error || 'Cannot open folder'), 'error');
+        }
     } catch (e) {
-        log('✗ Could not open folder: ' + e.message, 'error');
+        log('✗ ' + e.message, 'error');
     }
 });
 

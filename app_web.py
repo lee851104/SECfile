@@ -10,6 +10,9 @@ SEC EDGAR Downloader - Flask Web App
 
 import os
 import sys
+import subprocess
+import threading
+from pathlib import Path
 from flask import Flask, Response, jsonify, render_template, request
 
 from core.edgar_client import EdgarClient, FilingRecord, fuzzy_search
@@ -19,12 +22,95 @@ from core.filing_resolver import infer_fiscal_year_end_month, resolve_filename
 app = Flask(__name__)
 _client = EdgarClient()
 
+# 快取使用者資料夾的完整路徑：marker_id -> full_path
+_folder_cache: dict[str, str] = {}
+
 
 # ── Routes ────────────────────────────────────────────────
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/register-folder", methods=["POST"])
+def register_folder():
+    """
+    前端在使用者選的資料夾寫入一個 .sec_marker_<id> 檔案後，
+    呼叫這個端點。伺服器搜尋該標記檔案，找到後取得完整路徑並快取，
+    以便之後的 open-folder 呼叫使用。
+    """
+    data      = request.json or {}
+    marker_id = data.get("marker_id", "")
+    if not marker_id:
+        return jsonify({"error": "marker_id required"}), 400
+
+    marker_name = f".sec_marker_{marker_id}"
+
+    def search_for_marker():
+        """在常用位置搜尋標記檔案。"""
+        home = Path.home()
+        search_roots = [
+            home / "Desktop",
+            home / "Downloads",
+            home / "Documents",
+            home,
+        ]
+        # Windows：加入所有磁碟根目錄
+        if sys.platform == "win32":
+            import string
+            for drive in string.ascii_uppercase:
+                p = Path(f"{drive}:\\")
+                if p.exists() and p not in search_roots:
+                    search_roots.append(p)
+
+        for root in search_roots:
+            if not root.exists():
+                continue
+            # 搜尋最多 4 層深度
+            for depth in range(5):
+                pattern = "/".join(["*"] * depth) + ("/" if depth else "") + marker_name
+                for match in root.glob(pattern):
+                    return match.parent  # 回傳包含標記檔案的資料夾
+        return None
+
+    found = search_for_marker()
+    if found:
+        _folder_cache[marker_id] = str(found)
+        # 刪除標記檔案
+        try:
+            (found / marker_name).unlink()
+        except Exception:
+            pass
+        return jsonify({"ok": True, "path": str(found)})
+    else:
+        return jsonify({"error": "Marker file not found"}), 404
+
+
+@app.route("/api/open-folder", methods=["POST"])
+def open_folder():
+    """用快取的完整路徑在 OS 中開啟資料夾。"""
+    data      = request.json or {}
+    marker_id = data.get("marker_id", "")
+    ticker    = data.get("ticker", "")
+
+    base_path = _folder_cache.get(marker_id, "")
+    if not base_path:
+        return jsonify({"error": "Folder path not found. Please re-select the folder."}), 404
+
+    target = Path(base_path) / ticker if ticker else Path(base_path)
+    target.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(target))
+        elif sys.platform == "darwin":
+            subprocess.run(["open", str(target)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(target)], check=False)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/autocomplete")
