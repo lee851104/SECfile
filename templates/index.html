@@ -355,12 +355,9 @@ select {
     <hr class="div">
 
     <div class="field-label">FOLDER</div>
-    <input type="text" id="folderInput" placeholder="Enter download folder path..."
-           style="width:100%; padding:7px 10px; border:1px solid #E5E5E7; border-radius:6px; font-size:11px; font-family:Consolas,monospace; margin-bottom: 6px;">
     <div class="folder-row">
-      <span class="folder-path" id="folderPath">…</span>
+      <span class="folder-path" id="folderPath">No folder selected</span>
       <button class="btn-browse" id="btnBrowse">Browse</button>
-      <button class="btn-browse" id="btnSetPath">Set</button>
     </div>
 
     <div class="spacer"></div>
@@ -396,9 +393,6 @@ select {
       </div>
       <div class="bar-bg"><div class="bar-fill" id="barFill"></div></div>
       <div class="log-area" id="logArea"></div>
-      <button class="btn-open-folder" id="btnOpenFolder" disabled>
-        📁 Open Folder
-      </button>
     </div>
   </div>
 
@@ -406,198 +400,93 @@ select {
 
 <script>
 // ── State ─────────────────────────────────────────────────
-let allFilings   = [];
-let filtered     = [];
-let fyeMonth     = 12;
-let ticker       = '';
-let lastFolder   = '';
-let statuses     = {};
+let allFilings = [];
+let filtered   = [];
+let fyeMonth   = 12;
+let ticker     = '';
+let statuses   = {};
 
-// ── Folder ────────────────────────────────────────────────
-let selectedFolderHandle = null;
+// ── Folder（File System Access API handle，不是路徑字串）────
+let dirHandle = null;   // FileSystemDirectoryHandle，指向使用者選的資料夾
 
-async function loadFolder() {
-    // 優先從 localStorage 讀取之前選擇的資料夾
+// 嘗試從 IndexedDB 還原上次的 handle（頁面刷新後仍有效）
+async function restoreDirHandle() {
     try {
-        const saved = localStorage.getItem('selectedFolderPath');
-        if (saved) {
-            setFolderDisplay(saved);
-            return;
+        const db = await openHandleDB();
+        const stored = await dbGet(db, 'dirHandle');
+        if (stored) {
+            // 確認使用者仍授予權限
+            const perm = await stored.queryPermission({ mode: 'readwrite' });
+            if (perm === 'granted') {
+                dirHandle = stored;
+                document.getElementById('folderPath').textContent = dirHandle.name;
+                return;
+            }
         }
     } catch (e) {
-        console.log('localStorage not available');
+        console.log('Cannot restore dir handle:', e);
     }
-
-    // 若沒有之前的選擇，從伺服器取得預設資料夾（會自動建立）
-    try {
-        const r = await fetch('/api/browse-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: '' })
-        });
-        const d = await r.json();
-        if (d.ok || d.path) {
-            setFolderDisplay(d.path);
-        }
-    } catch (e) {
-        console.log('Cannot load default folder:', e);
-        setFolderDisplay('/tmp/downloads');
-    }
+    document.getElementById('folderPath').textContent = 'No folder selected';
 }
 
-function setFolderDisplay(path) {
-    lastFolder = path;
-    try {
-        localStorage.setItem('selectedFolderPath', path);
-    } catch (e) {
-        console.log('Cannot save to localStorage');
-    }
-
-    // 在輸入框和顯示區顯示完整路徑
-    document.getElementById('folderInput').value = path;
-    document.getElementById('folderPath').textContent = path;
-    document.getElementById('folderPath').title = path;
+// IndexedDB helpers
+function openHandleDB() {
+    return new Promise((resolve, reject) => {
+        const req = indexedDB.open('sec-downloader', 1);
+        req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror   = e => reject(e);
+    });
+}
+function dbPut(db, key, val) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('handles', 'readwrite');
+        tx.objectStore('handles').put(val, key);
+        tx.oncomplete = resolve;
+        tx.onerror = reject;
+    });
+}
+function dbGet(db, key) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction('handles', 'readonly');
+        const req = tx.objectStore('handles').get(key);
+        req.onsuccess = e => resolve(e.target.result);
+        req.onerror = reject;
+    });
 }
 
+// Browse 按鈕：請使用者選資料夾，取得 write handle
 document.getElementById('btnBrowse').addEventListener('click', async () => {
     const btn = document.getElementById('btnBrowse');
-    const input = document.getElementById('folderInput');
+    if (!('showDirectoryPicker' in window)) {
+        alert('Your browser does not support folder selection.\nPlease use Chrome or Edge.');
+        return;
+    }
     btn.textContent = 'Picking…';
     btn.disabled = true;
-
     try {
-        // 優先使用 File System Access API（本地 Chrome/Edge）
-        if ('showDirectoryPicker' in window) {
-            try {
-                const dirHandle = await window.showDirectoryPicker();
-                // 只能取得資料夾名稱，要使用者自己輸入完整路徑
-                console.log('[btnBrowse] Selected folder:', dirHandle.name);
+        const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        dirHandle = handle;
+        document.getElementById('folderPath').textContent = handle.name;
 
-                // 在輸入框中提示使用者手動輸入完整路徑
-                alert('Please enter the full path to the folder you selected in the input field below.\n\nExample: C:\\Users\\YourName\\Downloads\n\nFolder name: ' + dirHandle.name);
-                input.focus();
-                input.select();
-            } catch (e) {
-                if (e.name !== 'AbortError') {
-                    console.error('Error selecting folder:', e);
-                }
-            }
-        } else {
-            // Render 或其他環境：不支援 File System Access API
-            alert('Please enter the download folder path in the input field.\n\nExample: C:\\Users\\YourName\\Downloads');
-            input.focus();
+        // 存入 IndexedDB，頁面刷新後可還原
+        try {
+            const db = await openHandleDB();
+            await dbPut(db, 'dirHandle', handle);
+        } catch (e) {
+            console.log('Cannot persist dir handle:', e);
         }
+
+        log(`✓ Save folder: ${handle.name}`, 'success');
+    } catch (e) {
+        if (e.name !== 'AbortError') log('✗ ' + e.message, 'error');
     } finally {
         btn.textContent = 'Browse';
         btn.disabled = false;
     }
 });
 
-document.getElementById('btnSetPath').addEventListener('click', async () => {
-    const input = document.getElementById('folderInput');
-    const path = input.value.trim();
-
-    if (!path) {
-        alert('Please enter a folder path');
-        return;
-    }
-
-    const btn = document.getElementById('btnSetPath');
-    btn.textContent = 'Setting…';
-    btn.disabled = true;
-
-    try {
-        const r = await fetch('/api/browse-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: path })
-        });
-        const d = await r.json();
-
-        if (d.ok || d.path) {
-            setFolderDisplay(d.path);
-            log(`✓ Download folder set to: ${d.path}`, 'success');
-        } else {
-            alert('Error: ' + (d.error || 'Unknown error'));
-        }
-    } catch (e) {
-        alert('Error: ' + e.message);
-    } finally {
-        btn.textContent = 'Set';
-        btn.disabled = false;
-    }
-});
-
-// 嘗試取得資料夾的完整路徑
-async function getFullPath(dirHandle) {
-    try {
-        // 優先嘗試使用 path 屬性（在 Chrome 101+ 中支援）
-        if ('path' in dirHandle && dirHandle.path) {
-            console.log('✓ Got full path from dirHandle.path:', dirHandle.path);
-            return dirHandle.path;
-        }
-    } catch (e) {
-        console.log('✗ Cannot get full path via path property:', e);
-    }
-
-    // 方法2：透過建立檔案並檢查其路徑（hack，但有效）
-    try {
-        const testFile = await dirHandle.getFileHandle('.path_test', { create: true });
-        const file = await testFile.getFile();
-        const path = file.webkitRelativePath || file.name;
-        await dirHandle.removeEntry('.path_test', { recursive: false }).catch(() => {});
-        if (path && path !== '.path_test') {
-            console.log('✓ Got path via webkitRelativePath:', path);
-            return path;
-        }
-    } catch (e) {
-        console.log('✗ webkitRelativePath method failed:', e);
-    }
-
-    // 方法3：透過 FileSystemHandle 的 getParent（需要递归）
-    try {
-        const parts = [];
-        let current = dirHandle;
-        let attempts = 0;
-        const maxAttempts = 20; // 防止無限迴圈
-
-        while (current && attempts < maxAttempts) {
-            parts.unshift(current.name);
-            try {
-                // 嘗試取得父目錄（需要使用內部 API）
-                current = await current.getParent?.();
-                if (!current) break;
-            } catch (e) {
-                break;
-            }
-            attempts++;
-        }
-
-        if (parts.length > 1) {
-            const path = parts.join('\\');
-            console.log('✓ Reconstructed path:', path);
-            return path;
-        }
-    } catch (e) {
-        console.log('✗ Cannot reconstruct path:', e);
-    }
-
-    // 最後 fallback：只有資料夾名稱時，提示用戶這是限制
-    console.warn('⚠ Can only get folder name, not full path. Folder will be created relative to app directory.');
-    console.log('Folder name:', dirHandle.name);
-
-    // 返回資料夾名稱，讓後端知道這是部分路徑
-    return dirHandle.name || 'selected_folder';
-}
-
-document.getElementById('btnOpenFolder').addEventListener('click', () => {
-    const btn = document.getElementById('btnOpenFolder');
-    if (!btn.classList.contains('ready')) return;
-    const path = lastFolder || '';
-    if (path) fetch(`/api/open-folder?path=${encodeURIComponent(path)}`);
-});
-
-loadFolder();
+restoreDirHandle();
 
 // ── Autocomplete ──────────────────────────────────────────
 const tickerInput = document.getElementById('tickerInput');
@@ -766,87 +655,79 @@ document.getElementById('btnDeselAll').addEventListener('click', () => { documen
 document.getElementById('btnDownload').addEventListener('click', doDownload);
 
 async function doDownload() {
+    if (!dirHandle) {
+        alert('Please select a download folder first (click Browse).');
+        return;
+    }
+
+    // 確認寫入權限（可能需要重新授予）
+    const perm = await dirHandle.requestPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+        alert('Write permission denied. Please select the folder again.');
+        return;
+    }
+
     const selected = filtered.filter((_, i) => {
         const c = document.querySelector(`.row-chk[data-i="${i}"]`);
         return c && c.checked;
     });
     if (!selected.length) return;
 
+    const total = selected.length;
     document.getElementById('btnDownload').disabled = true;
     document.getElementById('barFill').style.width = '0%';
-    document.getElementById('progCount').textContent = `0 / ${selected.length}`;
-
-    // reset row statuses
-    selected.forEach((f, i) => setRowStat(f.accession_number, '—', ''));
+    document.getElementById('progCount').textContent = `0 / ${total}`;
+    selected.forEach(f => setRowStat(f.accession_number, '—', ''));
 
     try {
-        const r = await fetch('/api/download', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ticker, fye_month: fyeMonth, filings: selected }),
-        });
-        const { task_id } = await r.json();
-        if (!task_id) throw new Error('No task_id returned');
-        streamProgress(task_id, selected);
-    } catch(e) {
-        log('✗ ' + e, 'error');
+        // 在使用者選的資料夾內建立 ticker 子資料夾
+        const tickerDir = await dirHandle.getDirectoryHandle(ticker, { create: true });
+
+        for (let i = 0; i < total; i++) {
+            const filing = selected[i];
+            setRowStat(filing.accession_number, '⬇ Downloading…', 'stat-active');
+            document.getElementById('progCount').textContent = `${i} / ${total}`;
+
+            try {
+                // 向後端請求 PDF bytes
+                const r = await fetch('/api/get-filing', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ticker, fye_month: fyeMonth, filing }),
+                });
+
+                if (!r.ok) {
+                    const err = await r.json().catch(() => ({ error: r.statusText }));
+                    throw new Error(err.error || r.statusText);
+                }
+
+                const filename = r.headers.get('X-Filename') || filing.filename;
+                const blob     = await r.blob();
+
+                // 用 File System Access API 寫入使用者本機
+                const fileHandle = await tickerDir.getFileHandle(filename, { create: true });
+                const writable   = await fileHandle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+
+                setRowStat(filing.accession_number, '✓ Done', 'stat-done');
+                log(`✓ Saved ${filename}`, 'success');
+            } catch (e) {
+                setRowStat(filing.accession_number, '✗ Error', 'stat-error');
+                log(`✗ ${filing.filename}: ${e.message}`, 'error');
+            }
+
+            const pct = (i + 1) / total * 100;
+            document.getElementById('barFill').style.width = pct + '%';
+            document.getElementById('progCount').textContent = `${i + 1} / ${total}`;
+        }
+
+        log(`✓ All done — saved to "${dirHandle.name}/${ticker}"`, 'success');
+    } catch (e) {
+        log('✗ ' + e.message, 'error');
+    } finally {
         document.getElementById('btnDownload').disabled = false;
     }
-}
-
-function streamProgress(taskId, selected) {
-    const es = new EventSource(`/api/progress/${taskId}`);
-    let lastUpdate = Date.now();
-
-    es.onmessage = e => {
-        lastUpdate = Date.now();
-        try {
-            const evt = JSON.parse(e.data);
-            if (evt.type === 'ping') return;
-
-            if (evt.type === 'progress') {
-                const pct = evt.total > 0 ? (evt.done / evt.total * 100) : 0;
-                document.getElementById('barFill').style.width = pct + '%';
-                document.getElementById('progCount').textContent = `${evt.done} / ${evt.total}`;
-                if (evt.done < selected.length)
-                    setRowStat(selected[evt.done].accession_number, '⬇ Downloading…', 'stat-active');
-                if (evt.done > 0)
-                    setRowStat(selected[evt.done - 1].accession_number, '✓ Done', 'stat-done');
-            }
-            else if (evt.type === 'log') {
-                log(evt.msg, evt.level);
-            }
-            else if (evt.type === 'done') {
-                if (selected.length)
-                    setRowStat(selected[selected.length - 1].accession_number, '✓ Done', 'stat-done');
-                document.getElementById('barFill').style.width = '100%';
-                log('✓ All downloads complete', 'success');
-                document.getElementById('btnDownload').disabled = false;
-                // 顯示「Open Folder」按鈕，指向下載的資料夾
-                if (evt.folder) setFolderDisplay(evt.folder);
-                const openBtn = document.getElementById('btnOpenFolder');
-                openBtn.disabled = false;
-                openBtn.classList.add('ready');
-                es.close();
-            }
-            else if (evt.type === 'error') {
-                log('✗ Error: ' + evt.msg, 'error');
-                document.getElementById('btnDownload').disabled = false;
-                es.close();
-            }
-        } catch (parseErr) {
-            log('✗ Message parse error: ' + parseErr.message, 'error');
-            console.error('Parse error:', parseErr, 'Raw data:', e.data);
-            document.getElementById('btnDownload').disabled = false;
-            es.close();
-        }
-    };
-
-    es.onerror = () => {
-        log('✗ Connection lost (server timeout or error)', 'error');
-        document.getElementById('btnDownload').disabled = false;
-        es.close();
-    };
 }
 
 function setRowStat(accNum, text, cls) {
