@@ -507,43 +507,62 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
 // 嘗試取得資料夾的完整路徑
 async function getFullPath(dirHandle) {
     try {
-        // 嘗試使用 path 屬性（在 Chrome/Edge 中支援）
-        if (dirHandle.path) {
-            console.log('Got full path from dirHandle.path:', dirHandle.path);
+        // 優先嘗試使用 path 屬性（在 Chrome 101+ 中支援）
+        if ('path' in dirHandle && dirHandle.path) {
+            console.log('✓ Got full path from dirHandle.path:', dirHandle.path);
             return dirHandle.path;
         }
     } catch (e) {
-        console.log('Cannot get full path via path property:', e);
+        console.log('✗ Cannot get full path via path property:', e);
     }
 
-    // Fallback：用相對路徑的方式重建路徑
+    // 方法2：透過建立檔案並檢查其路徑（hack，但有效）
     try {
-        // 在某些瀏覽器中，可以透過 isSameEntry 來取得路徑
-        const parts = [];
-        let current = dirHandle;
-
-        while (current) {
-            parts.unshift(current.name);
-            try {
-                const parent = await current.getParent?.();
-                if (!parent) break;
-                current = parent;
-            } catch (e) {
-                break;
-            }
-        }
-
-        if (parts.length > 0) {
-            const path = parts.join('\\');
-            console.log('Reconstructed path:', path);
+        const testFile = await dirHandle.getFileHandle('.path_test', { create: true });
+        const file = await testFile.getFile();
+        const path = file.webkitRelativePath || file.name;
+        await dirHandle.removeEntry('.path_test', { recursive: false }).catch(() => {});
+        if (path && path !== '.path_test') {
+            console.log('✓ Got path via webkitRelativePath:', path);
             return path;
         }
     } catch (e) {
-        console.log('Cannot reconstruct path:', e);
+        console.log('✗ webkitRelativePath method failed:', e);
     }
 
-    // 最後 fallback：使用資料夾名稱
-    console.log('Using fallback folder name:', dirHandle.name);
+    // 方法3：透過 FileSystemHandle 的 getParent（需要递归）
+    try {
+        const parts = [];
+        let current = dirHandle;
+        let attempts = 0;
+        const maxAttempts = 20; // 防止無限迴圈
+
+        while (current && attempts < maxAttempts) {
+            parts.unshift(current.name);
+            try {
+                // 嘗試取得父目錄（需要使用內部 API）
+                current = await current.getParent?.();
+                if (!current) break;
+            } catch (e) {
+                break;
+            }
+            attempts++;
+        }
+
+        if (parts.length > 1) {
+            const path = parts.join('\\');
+            console.log('✓ Reconstructed path:', path);
+            return path;
+        }
+    } catch (e) {
+        console.log('✗ Cannot reconstruct path:', e);
+    }
+
+    // 最後 fallback：只有資料夾名稱時，提示用戶這是限制
+    console.warn('⚠ Can only get folder name, not full path. Folder will be created relative to app directory.');
+    console.log('Folder name:', dirHandle.name);
+
+    // 返回資料夾名稱，讓後端知道這是部分路徑
     return dirHandle.name || 'selected_folder';
 }
 

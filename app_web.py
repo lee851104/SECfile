@@ -46,8 +46,9 @@ def get_folder():
 @app.route("/api/browse-folder", methods=["POST"])
 def browse_folder():
     """設定下載資料夾路徑。支援：
-    1. 本地執行：File System Access API 選擇的路徑
-    2. Render：使用環境變數或預設路徑
+    1. 本地執行：File System Access API 選擇的完整路徑
+    2. 限制環境：只能取得資料夾名稱（建立在應用目錄下）
+    3. Render：使用環境變數或預設路徑
     """
     global _download_dir
     data = request.json or {}
@@ -56,6 +57,15 @@ def browse_folder():
     debug_log = []
     debug_log.append(f"Received path: {repr(new_path)}")
     debug_log.append(f"Current _download_dir before: {_download_dir}")
+
+    # 檢查是否只收到資料夾名稱（沒有完整路徑）
+    is_folder_name_only = new_path and not ((':\\' in new_path) or new_path.startswith('/')):
+    if is_folder_name_only:
+        debug_log.append(f"⚠ Received folder name only: {new_path}")
+        debug_log.append(f"ℹ Browser File System Access API cannot provide full path in this configuration")
+        # 使用預設路徑加上資料夾名稱
+        new_path = str(Path(DEFAULT_DOWNLOAD_DIR) / new_path)
+        debug_log.append(f"ℹ Using default path with folder name: {new_path}")
 
     # 如果沒有提供路徑，檢查環境變數或使用預設
     if not new_path:
