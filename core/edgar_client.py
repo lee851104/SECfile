@@ -155,18 +155,21 @@ class EdgarClient:
         raise ValueError(f"找不到 {filing.accession_number} 的主文件")
 
     def download_html(self, url: str) -> str:
-        """下載 HTML 內容並回傳字串。"""
+        """下載 HTML 內容並回傳字串，含自動重試。"""
         for attempt in range(MAX_RETRIES):
             try:
                 time.sleep(RATE_LIMIT_DELAY)
-                resp = self.session.get(url, timeout=REQUEST_TIMEOUT)
+                # 增加超時時間到 30 秒（SEC 伺服器可能很慢）
+                resp = self.session.get(url, timeout=30)
                 resp.raise_for_status()
                 resp.encoding = resp.apparent_encoding or "utf-8"
                 return resp.text
             except requests.RequestException as e:
                 if attempt == MAX_RETRIES - 1:
                     raise
-                time.sleep(1.5 ** attempt)
+                # 指數退避重試
+                wait = 2 ** attempt
+                time.sleep(wait)
         return ""
 
     # ── 私有方法 ──────────────────────────────────────────

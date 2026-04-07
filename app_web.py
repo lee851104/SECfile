@@ -181,15 +181,23 @@ def progress_stream(task_id):
     q = _tasks[task_id]["queue"]
 
     def generate():
+        idle_count = 0
         while True:
             try:
-                event = q.get(timeout=25)
+                # 增加超時到 60 秒（大檔案可能需要很久）
+                event = q.get(timeout=60)
+                idle_count = 0
                 yield f"data: {json.dumps(event)}\n\n"
                 if event["type"] in ("done", "error"):
                     _tasks.pop(task_id, None)
                     break
             except queue.Empty:
-                # 定期 ping 保持連線
+                # 定期 ping 保持連線，避免 30 秒後被關閉
+                idle_count += 1
+                if idle_count > 10:
+                    # 超過 10 分鐘無進度，推測出錯
+                    _tasks.pop(task_id, None)
+                    break
                 yield "data: {\"type\":\"ping\"}\n\n"
 
     return Response(

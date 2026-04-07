@@ -90,11 +90,26 @@ def _prepare_html_for_pdf(html: str, base_url: str = None, session=None) -> str:
             full_url = src if src.startswith('http') else urljoin(base_url, src)
             try:
                 time.sleep(0.15)
-                resp  = session.get(full_url, timeout=10)
-                ctype = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0]
-                b64   = base64.b64encode(resp.content).decode()
-                return f'src="data:{ctype};base64,{b64}"'
+                # 增加超時到 15 秒，並設定重試
+                resp = None
+                for attempt in range(3):
+                    try:
+                        resp = session.get(full_url, timeout=15)
+                        resp.raise_for_status()
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            time.sleep(1)
+                        else:
+                            raise
+
+                if resp:
+                    ctype = resp.headers.get('Content-Type', 'image/jpeg').split(';')[0]
+                    b64   = base64.b64encode(resp.content).decode()
+                    return f'src="data:{ctype};base64,{b64}"'
+                return m.group(0)
             except Exception:
+                # 圖片下載失敗，保留原始 URL（不影響 PDF 生成）
                 return m.group(0)
 
         html = re.sub(r'src="([^"]*\.(?:jpg|jpeg|png|gif|svg)[^"]*)"',
@@ -157,17 +172,26 @@ def _convert_html_to_pdf(html: str, output_path: Path) -> bool:
             browser = p.chromium.launch()
             page    = browser.new_page()
             page.goto(f"file:///{tmp.replace(os.sep, '/')}")
-            page.wait_for_load_state("networkidle", timeout=15000)
+            # 增加超時到 30 秒，並使用 "domcontentloaded" 而不是 "networkidle"
+            # 避免等待背景網路請求
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=30000)
+            except:
+                # 如果超時，也繼續（某些檔案可能卡住）
+                pass
             page.pdf(
                 path          = str(output_path),
                 format        = "A4",
                 margin        = {"top": "2cm", "bottom": "2cm",
                                  "left": "2.5cm", "right": "2.5cm"},
                 print_background = True,
+                timeout       = 30000,  # 加上 PDF 生成超時
             )
             browser.close()
         return True
-    except Exception:
+    except Exception as e:
+        import sys
+        print(f"PDF conversion error: {e}", file=sys.stderr)
         return False
     finally:
         if tmp and os.path.exists(tmp):
