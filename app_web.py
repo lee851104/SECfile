@@ -166,8 +166,10 @@ def search():
 @app.route("/api/get-filing", methods=["POST"])
 def get_filing():
     """
-    下載單一 filing、轉成 PDF，直接回傳 bytes 給瀏覽器。
-    前端收到後用 File System Access API 寫入使用者本機資料夾。
+    下載單一 filing：回傳 HTML（供瀏覽器 print-to-PDF）+ MD 文字檔。
+    前端收到後：
+    1. 用 window.open() 新視窗開啟 HTML，提示使用者 Ctrl+P 下載 PDF
+    2. 用 File System Access API 寫入 .md 檔
     """
     data      = request.json or {}
     ticker    = data.get("ticker", "")
@@ -196,32 +198,31 @@ def get_filing():
         # 2. 清理 XBRL
         html = _clean_xbrl(html)
 
-        # 3. 準備 PDF 用的 HTML（嵌入圖片等）
+        # 3. 生成 .md 文字版
+        from core.downloader import _html_to_markdown
+        md_text = _html_to_markdown(html)
+
+        # 4. 準備前端可直接開啟的 HTML（嵌入圖片、簡潔 CSS）
         acc_clean = filing.accession_number.replace("-", "")
         base_url  = (
             f"https://www.sec.gov/Archives/edgar/data/"
             f"{filing.cik}/{acc_clean}/"
         )
-        pdf_html = _prepare_html_for_pdf(html, base_url=base_url, session=_client.session)
+        display_html = _prepare_html_for_pdf(html, base_url=base_url, session=_client.session)
 
-        # 4. 轉成 PDF bytes
-        pdf_bytes = convert_html_to_pdf_bytes(pdf_html)
-        if not pdf_bytes:
-            return jsonify({"error": "PDF conversion failed"}), 500
+        # 5. 回傳 JSON：HTML（供瀏覽器開啟）+ MD（供下載）
+        filenames = {
+            "html": resolve_filename(filing, fye_month).replace(".md", ".html"),
+            "md": resolve_filename(filing, fye_month),
+        }
+        print(f"[get-filing] Returning {len(display_html)} bytes HTML + {len(md_text)} bytes MD", flush=True)
 
-        # 5. 回傳 PDF bytes 給瀏覽器
-        filename = resolve_filename(filing, fye_month).replace(".md", ".pdf")
-        print(f"[get-filing] Returning {len(pdf_bytes)} bytes as {filename}", flush=True)
-
-        return Response(
-            pdf_bytes,
-            mimetype="application/pdf",
-            headers={
-                "Content-Disposition": f'inline; filename="{filename}"',
-                "X-Filename": filename,
-                "Access-Control-Expose-Headers": "X-Filename",
-            },
-        )
+        return jsonify({
+            "ok": True,
+            "html": display_html,
+            "markdown": md_text,
+            "filenames": filenames,
+        })
     except Exception as e:
         import traceback
         traceback.print_exc()

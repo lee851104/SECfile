@@ -151,7 +151,7 @@ def _html_to_markdown(html: str) -> str:
     return md.strip()
 
 
-def convert_html_to_pdf_bytes(html: str) -> bytes | None:
+def convert_html_to_pdf_bytes_deprecated(html: str) -> bytes | None:
     """
     用 reportlab 將清理後的 HTML 轉成 PDF。
     解析 HTML，提取文字和表格，用 reportlab Paragraph/Table 排版。

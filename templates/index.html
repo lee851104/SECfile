@@ -724,7 +724,7 @@ async function doDownload() {
             document.getElementById('progCount').textContent = `${i} / ${total}`;
 
             try {
-                // 向後端請求 PDF bytes
+                // 向後端請求 HTML + MD
                 const r = await fetch('/api/get-filing', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -736,17 +736,29 @@ async function doDownload() {
                     throw new Error(err.error || r.statusText);
                 }
 
-                const filename = r.headers.get('X-Filename') || filing.filename;
-                const blob     = await r.blob();
+                const data = await r.json();
+                if (!data.ok) {
+                    throw new Error(data.error || 'Unknown error');
+                }
 
-                // 用 File System Access API 寫入使用者本機
-                const fileHandle = await tickerDir.getFileHandle(filename, { create: true });
-                const writable   = await fileHandle.createWritable();
-                await writable.write(blob);
-                await writable.close();
+                // 1. 寫入 .md 文字檔
+                const mdFilename = data.filenames.md;
+                const mdBlob = new Blob([data.markdown], { type: 'text/markdown' });
+                const mdHandle = await tickerDir.getFileHandle(mdFilename, { create: true });
+                const mdWritable = await mdHandle.createWritable();
+                await mdWritable.write(mdBlob);
+                await mdWritable.close();
+
+                // 2. 寫入 .html 檔（供瀏覽器開啟 print-to-PDF）
+                const htmlFilename = data.filenames.html;
+                const htmlBlob = new Blob([data.html], { type: 'text/html' });
+                const htmlHandle = await tickerDir.getFileHandle(htmlFilename, { create: true });
+                const htmlWritable = await htmlHandle.createWritable();
+                await htmlWritable.write(htmlBlob);
+                await htmlWritable.close();
 
                 setRowStat(filing.accession_number, '✓ Done', 'stat-done');
-                log(`✓ Saved ${filename}`, 'success');
+                log(`✓ Saved ${mdFilename} + ${htmlFilename}`, 'success');
             } catch (e) {
                 setRowStat(filing.accession_number, '✗ Error', 'stat-error');
                 log(`✗ ${filing.filename}: ${e.message}`, 'error');
