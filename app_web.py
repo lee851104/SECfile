@@ -11,7 +11,6 @@ SEC EDGAR Downloader - Flask Web App
 import os
 import sys
 import subprocess
-import threading
 from pathlib import Path
 from flask import Flask, Response, jsonify, render_template, request
 
@@ -19,31 +18,11 @@ from core.edgar_client import EdgarClient, FilingRecord, fuzzy_search
 from core.downloader import _clean_xbrl, _prepare_html_for_pdf, convert_html_to_pdf_bytes
 from core.filing_resolver import infer_fiscal_year_end_month, resolve_filename
 
-# 在伺服器啟動時自動安裝 Playwright Chromium（Render 上必要）
-def _ensure_playwright_ready():
-    """確保 Playwright Chromium 已安裝，在伺服器啟動時執行一次。"""
-    try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            p.chromium.launch().close()
-    except Exception as e:
-        print(f"[Playwright] Auto-install attempt...", file=sys.stderr)
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
-                check=True, timeout=120
-            )
-        except Exception as install_err:
-            print(f"[Playwright] Install failed: {install_err}", file=sys.stderr)
-
 app = Flask(__name__)
 _client = EdgarClient()
 
 # 快取使用者資料夾的完整路徑：marker_id -> full_path
 _folder_cache: dict[str, str] = {}
-
-# 啟動時確保 Playwright 就緒（背景執行，避免阻塞 Flask 啟動）
-threading.Thread(target=_ensure_playwright_ready, daemon=True).start()
 
 
 # ── Routes ────────────────────────────────────────────────

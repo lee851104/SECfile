@@ -153,42 +153,19 @@ def _html_to_markdown(html: str) -> str:
 
 def convert_html_to_pdf_bytes(html: str) -> bytes | None:
     """
-    用 Playwright 將 HTML 渲染為 PDF，回傳 bytes（不寫入檔案）。
+    用 WeasyPrint 將 HTML 渲染為 PDF，回傳 bytes（不寫入檔案）。
     供 Web API 使用，直接回傳給瀏覽器下載。
     """
-    import tempfile, os
-    tmp = None
     try:
-        from playwright.sync_api import sync_playwright
-        with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.html', encoding='utf-8', delete=False
-        ) as f:
-            f.write(html)
-            tmp = f.name
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page    = browser.new_page()
-            page.goto(f"file:///{tmp.replace(os.sep, '/')}")
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=30000)
-            except:
-                pass
-            pdf_bytes = page.pdf(
-                format        = "A4",
-                margin        = {"top": "2cm", "bottom": "2cm",
-                                 "left": "2.5cm", "right": "2.5cm"},
-                print_background = True,
-            )
-            browser.close()
+        from weasyprint import HTML, CSS
+        pdf_bytes = HTML(string=html).write_pdf(
+            stylesheets=[CSS(string="@page { margin: 2cm 2.5cm; }")]
+        )
         return pdf_bytes
     except Exception as e:
         import sys
         print(f"PDF conversion error: {e}", file=sys.stderr)
         return None
-    finally:
-        if tmp and os.path.exists(tmp):
-            os.unlink(tmp)
 
 
 def _convert_html_to_pdf(html: str, output_path: Path) -> bool:
