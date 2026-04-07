@@ -428,7 +428,12 @@ document.getElementById('btnBrowse').addEventListener('click', async () => {
     try {
         const r = await fetch('/api/browse-folder', { method: 'POST' });
         const d = await r.json();
-        setFolderDisplay(d.path);
+        if (d.error) {
+            alert('Browse folder is not available on this system.\n\nSet DOWNLOAD_DIR environment variable to configure the download folder.');
+            setFolderDisplay(d.path);
+        } else {
+            setFolderDisplay(d.path);
+        }
     } finally {
         btn.textContent = 'Browse'; btn.disabled = false;
     }

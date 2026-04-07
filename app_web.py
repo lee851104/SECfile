@@ -22,7 +22,8 @@ from utils.constants import DEFAULT_DOWNLOAD_DIR
 app = Flask(__name__)
 
 _client = EdgarClient()
-_download_dir = Path(DEFAULT_DOWNLOAD_DIR).resolve()
+# 支援環境變數設定下載資料夾 (用於遠程部署)
+_download_dir = Path(os.environ.get("DOWNLOAD_DIR", DEFAULT_DOWNLOAD_DIR)).resolve()
 
 # 進行中的下載任務：task_id -> {"queue": Queue, "thread": Thread}
 _tasks: dict[str, dict] = {}
@@ -42,10 +43,15 @@ def get_folder():
 
 @app.route("/api/browse-folder", methods=["POST"])
 def browse_folder():
-    """用 tkinter 開啟資料夾選擇器（本機執行，不需要前端支援）。"""
+    """用 tkinter 開啟資料夾選擇器（僅在本地執行）。"""
     global _download_dir
-    import tkinter as tk
-    from tkinter import filedialog
+
+    # 在 Render 等遠程環境上，tkinter 無法使用，所以回傳錯誤
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        return jsonify({"error": "Browse not available on this system", "path": str(_download_dir)}), 400
 
     result: dict = {}
 
