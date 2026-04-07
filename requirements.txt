@@ -1,4 +1,5 @@
 requests>=2.32.0
+flask>=3.0.0
 Pillow>=10.0.0
 pyinstaller>=6.8.0
 html2text>=2024.1.0

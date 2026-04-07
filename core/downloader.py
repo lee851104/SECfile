@@ -43,11 +43,21 @@ def _clean_xbrl(html: str) -> str:
     移除 inline XBRL 標籤和隱藏的 XBRL 定義區塊。
     保留可見的業務文字內容。
     """
-    # 1. 移除 <div style="display:none">...</div>（XBRL 定義區塊）
-    html = re.sub(
-        r'<div\s+style="display\s*:\s*none"[^>]*>.*?</div>',
-        '', html, flags=re.DOTALL | re.IGNORECASE
-    )
+    # 1. 用 BeautifulSoup 移除 display:none 的 div（正確處理巢狀結構與 style 變體）
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, 'lxml')
+        for tag in soup.find_all(True, style=lambda s: s and
+                                 re.search(r'display\s*:\s*none', s, re.IGNORECASE)):
+            tag.decompose()
+        html = str(soup)
+    except Exception:
+        # fallback：regex（可能漏掉巢狀 div 或帶分號的 style）
+        html = re.sub(
+            r'<div\s[^>]*style\s*=\s*"[^"]*display\s*:\s*none[^"]*"[^>]*>.*?</div>',
+            '', html, flags=re.DOTALL | re.IGNORECASE
+        )
+
     # 2. 移除 <ix:hidden>
     html = re.sub(r'<ix:hidden[^>]*>.*?</ix:hidden>', '', html, flags=re.DOTALL | re.IGNORECASE)
     # 3. 移除 XBRL 命名空間標籤（xbrli:*, link:*, 等）
@@ -71,12 +81,13 @@ def _prepare_html_for_pdf(html: str, base_url: str = None, session=None) -> str:
     # Logo 修復：用 edgar client 的 session（有正確 User-Agent）下載圖片並 base64 嵌入
     if base_url and session:
         import base64, time
+        from urllib.parse import urljoin
 
         def _embed_image(m):
             src = m.group(1)
             if src.startswith('data:'):
                 return m.group(0)
-            full_url = src if src.startswith('http') else base_url + src
+            full_url = src if src.startswith('http') else urljoin(base_url, src)
             try:
                 time.sleep(0.15)
                 resp  = session.get(full_url, timeout=10)
