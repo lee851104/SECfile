@@ -791,12 +791,11 @@ async function doDownload() {
 
         log(`✓ All done — saved to "${dirHandle.name}/${ticker}"`, 'success');
 
-        // 清理標記檔案
+        // 清理標記檔案（在父資料夾）
         try {
-            const tickerDir = await dirHandle.getDirectoryHandle(ticker);
-            for await (const [name, handle] of tickerDir.entries()) {
+            for await (const [name] of dirHandle.entries()) {
                 if (name.startsWith('.sec_marker_')) {
-                    await tickerDir.removeEntry(name);
+                    await dirHandle.removeEntry(name);
                 }
             }
         } catch (e) {
